@@ -296,13 +296,19 @@ class Esp32AudioAdapter {
     const detecting = active && amp > 0.06;
 
     if (!open) {
-      label.textContent = "ESP32 未连接 — 请运行 Bridge（Arduino 串口）";
+      label.textContent = "INMP441 未连接 — 请运行 Bridge（ESP32 串口）";
+      monitor?.classList.remove("is-live", "is-detecting");
+      return;
+    }
+
+    if (this.serialOpen === false) {
+      label.textContent = "INMP441 串口未开 — 关闭串口监视器并重启 Bridge";
       monitor?.classList.remove("is-live", "is-detecting");
       return;
     }
 
     if (!active && this.messageCount === 0) {
-      label.textContent = "ESP32 · Arduino 已连接，等待声音…";
+      label.textContent = "INMP441 已连接，等待声音…";
       monitor?.classList.remove("is-live", "is-detecting");
       return;
     }
@@ -311,11 +317,11 @@ class Esp32AudioAdapter {
     monitor?.classList.toggle("is-detecting", detecting);
 
     if (!active && this.messageCount > 0) {
-      label.textContent = "ESP32 · 数据中断（检查 Arduino / 串口）";
+      label.textContent = "INMP441 数据中断（检查接线 / 串口）";
     } else if (detecting) {
-      label.textContent = "ESP32 · 检测到声音";
+      label.textContent = "INMP441 · 检测到声音";
     } else {
-      label.textContent = "ESP32 · Arduino 监听中";
+      label.textContent = "INMP441 · 监听中";
     }
   }
 
@@ -376,8 +382,9 @@ class Esp32AudioAdapter {
     return this.isActive();
   }
 
+  /** Bridge WS + ESP32 serial open → INMP441 path available. */
   isHardwareReady() {
-    return this.isWsOpen();
+    return this.isWsOpen() && this.serialOpen !== false;
   }
 
   getNormalized() {

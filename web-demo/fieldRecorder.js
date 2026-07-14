@@ -13,6 +13,7 @@ class FieldRecorder {
     this.recordCounter = 0;
     this.lastMeterLevel = 0;
     this.usedPcmPath = false;
+    this.pcmByteTotal = 0;
     this.savedMetricsSeries = [];
     this.previewAudio = null;
     this.previewUrl = null;
@@ -153,7 +154,29 @@ class FieldRecorder {
   }
 
   hardwareErrorMessage() {
-    return "ESP32 未连接。\n\n请确认 Bridge 在运行：\nnode bridge/serial-bridge.js --port COM3\n\n并关闭 Arduino 串口监视器。";
+    return (
+      "INMP441 硬件未就绪。\n\n" +
+      "录音只用 ESP32 + INMP441，不用电脑麦克风。\n\n" +
+      "请确认：\n" +
+      "1. 已烧录 esp32/inmp441_bridge.ino\n" +
+      "2. Bridge 在运行（COM3 / cu.usbserial，波特率 500000）\n" +
+      "3. 已关闭 Arduino 串口监视器\n" +
+      "4. 页面上方「ESP32 实时」条有音量跳动"
+    );
+  }
+
+  serialErrorMessage() {
+    return (
+      "ESP32 串口未打开，INMP441 无法收音。\n\n" +
+      "请关闭 Arduino 串口监视器，确认 USB 已插入，然后重启 Bridge。"
+    );
+  }
+
+  /** Bridge WS open + serial open (INMP441 path ready). */
+  isInmp441Ready(esp) {
+    if (!esp?.isWsOpen()) return false;
+    if (esp.serialOpen === false) return false;
+    return true;
   }
 
   pushMetricSample(force) {
@@ -182,8 +205,14 @@ class FieldRecorder {
     this.bindElements();
 
     const esp = this.getAdapter();
-    if (!esp?.isWsOpen()) {
-      if (!options.fromHardware) alert(this.hardwareErrorMessage());
+    if (!this.isInmp441Ready(esp)) {
+      if (!options.fromHardware) {
+        alert(
+          esp?.isWsOpen() && esp.serialOpen === false
+            ? this.serialErrorMessage()
+            : this.hardwareErrorMessage()
+        );
+      }
       return;
     }
 
@@ -194,6 +223,7 @@ class FieldRecorder {
     this.startTime = Date.now();
     this.lastSampleAt = 0;
     this.usedPcmPath = false;
+    this.pcmByteTotal = 0;
 
     // Keyes already toggled ESP32 recording — do not send REC_START again
     if (!options.skipSerialCommand && esp?.isWsOpen()) {
@@ -216,15 +246,23 @@ class FieldRecorder {
       });
       this.lastMeterLevel = level;
       if (this.els.pointCount) {
-        this.els.pointCount.textContent = `硬件数据：${this.metricsBuffer.length} 点 · 音量 ${Math.round(level * 100)}%`;
+        const pcmKb = (this.pcmByteTotal / 1024).toFixed(1);
+        this.els.pointCount.textContent =
+          `INMP441 PCM：${pcmKb} KB · 音量 ${Math.round(level * 100)}%`;
       }
     };
 
     esp.onPcmFrame = (bytes) => {
       if (!this.recording) return;
       this.pcmChunks.push(bytes);
+      this.pcmByteTotal += bytes.length;
       this.lastMeterLevel = pcmLevelFromBytes(bytes);
       this.pushMetricSample(true);
+      if (this.els.pointCount) {
+        const pcmKb = (this.pcmByteTotal / 1024).toFixed(1);
+        this.els.pointCount.textContent =
+          `INMP441 PCM：${pcmKb} KB · 帧 ${this.pcmChunks.length}`;
+      }
     };
 
     const pipe = document.getElementById("pipelineStatus");
@@ -238,8 +276,8 @@ class FieldRecorder {
     this.setPanel("active");
     if (this.els.hint) {
       this.els.hint.textContent = options.fromHardware
-        ? "正在录音… 再按 Keyes 按钮或点 Stop 结束。"
-        : "正在录音… 按 Stop 结束（不会自动保存）。";
+        ? "INMP441 录音中… 再按 Keyes 或点 Stop 结束。"
+        : "INMP441 录音中… 点 Stop 结束（不用电脑麦克风）。";
     }
     this.startMeterLoop();
   }
@@ -290,11 +328,17 @@ class FieldRecorder {
     const sampleRate = esp?.sampleRate || 16000;
     const pcm = mergePcmChunks(this.pcmChunks);
     this.pcmChunks = [];
+    this.pcmByteTotal = 0;
 
-    if (this.metricsBuffer.length < 2 && pcm.length < 640) {
+    // Hard requirement: only accept real INMP441 PCM — never computer mic,
+    // never metrics-synthesized fake WAV.
+    const minPcmBytes = 640; // ≥ ~20 ms @ 16 kHz mono PCM16
+    if (pcm.length < minPcmBytes) {
       alert(
-        "没有收到 ESP32 硬件数据。\n\n请先看页面上方「ESP32 实时」条是否有音量跳动。\n" +
-        "若没有：关闭 Arduino 串口监视器 → 运行 node bridge/serial-bridge.js --port COM3"
+        "未收到 INMP441 真实 PCM，本次录音作废。\n\n" +
+        "不会用电脑麦克风，也不会用音量曲线伪造音频。\n\n" +
+        "请确认已烧录 esp32/inmp441_bridge.ino，Bridge 串口已开，" +
+        "页面上方电平条在动后再录。"
       );
       this.setPanel("idle");
       return;
@@ -302,22 +346,15 @@ class FieldRecorder {
 
     this.ensureMetricsBuffer(duration);
 
-    let blob = null;
-
-    if (pcm.length >= 640) {
-      blob = encodeWavFromPcmBytes(pcm, sampleRate);
-      this.usedPcmPath = true;
-    } else {
-      blob = synthesizeWavFromMetrics(this.metricsBuffer, sampleRate);
-      this.usedPcmPath = false;
-    }
+    const blob = encodeWavFromPcmBytes(pcm, sampleRate);
+    this.usedPcmPath = true;
 
     const sampleCount = this.metricsBuffer.length;
     this.savedMetricsSeries = this.metricsBuffer.map(s => ({ ...s }));
     this.metricsBuffer = [];
 
     if (!blob) {
-      alert("无法生成录音文件，请确认 ESP32 有数据（电平条在动）。");
+      alert("无法从 INMP441 PCM 生成 WAV，请重试。");
       this.setPanel("idle");
       return;
     }
@@ -327,17 +364,16 @@ class FieldRecorder {
 
     if (this.els.nameInput) this.els.nameInput.value = this.defaultName();
     if (this.els.saveSummary) {
-      const via = this.usedPcmPath ? "ESP32 真实 PCM" : "音量曲线还原（非原声）";
+      const pcmKb = (pcm.length / 1024).toFixed(1);
       const maxPct = Math.round(
         Math.max(...this.savedMetricsSeries.map(s => s.level), 0) * 100
       );
       this.els.saveSummary.textContent =
-        `${this.app.formatDuration(duration)} · ${sampleCount} 点 · 峰值 ${maxPct}% · ${via}`;
+        `${this.app.formatDuration(duration)} · INMP441 PCM ${pcmKb} KB · 峰值 ${maxPct}%`;
     }
     if (this.els.hint) {
-      this.els.hint.textContent = this.usedPcmPath
-        ? "录音已停止。点 ▶ 试听真实硬件录音，输入名称后 Save 保存。"
-        : "当前 Arduino 只传音量数字，试听不是原声。要录真实声音请烧录 esp32/inmp441_record.ino（921600）。点 ▶ 可听能量还原版。";
+      this.els.hint.textContent =
+        "INMP441 录音已停止。点 ▶ 试听真实硬件原声，命名后 Save。";
     }
 
     this.setPreviewPlaying(false);
@@ -422,7 +458,9 @@ class FieldRecorder {
       g.fillRect((w - barW) / 2, h * 0.35, barW, h * 0.3);
 
       if (this.els.pointCount) {
-        this.els.pointCount.textContent = `硬件数据：${this.metricsBuffer.length} 点`;
+        const pcmKb = ((this.pcmByteTotal || 0) / 1024).toFixed(1);
+        this.els.pointCount.textContent =
+          `INMP441 PCM：${pcmKb} KB · 点 ${this.metricsBuffer.length}`;
       }
 
       if (this.els.timer) {
