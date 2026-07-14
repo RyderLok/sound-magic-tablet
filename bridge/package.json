@@ -1,0 +1,15 @@
+{
+  "name": "sound-magic-serial-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ESP32 INMP441 serial → WebSocket bridge for Sound Magic Tablet",
+  "main": "serial-bridge.js",
+  "scripts": {
+    "start": "node serial-bridge.js"
+  },
+  "dependencies": {
+    "@serialport/parser-readline": "^12.0.0",
+    "serialport": "^12.0.0",
+    "ws": "^8.18.0"
+  }
+}

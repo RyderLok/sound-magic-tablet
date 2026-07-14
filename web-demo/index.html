@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sound Magic Tablet</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ================================================================
+       LIBRARY VIEW — default page
+  ================================================================ -->
+  <div id="libraryView" class="view">
+
+    <header class="lib-header">
+      <div class="lib-header-left">
+        <h1 class="lib-title">Sound Magic Tablet</h1>
+        <p class="lib-subtitle">Discover a sound · Record it · Watch it become living material · Draw with it</p>
+      </div>
+      <div class="workflow-steps">
+        <span class="wf-step wf-active">① Collect</span>
+        <span class="wf-arrow">→</span>
+        <span class="wf-step">② Transform</span>
+        <span class="wf-arrow">→</span>
+        <span class="wf-step">③ Draw</span>
+      </div>
+    </header>
+
+    <main class="lib-main">
+
+      <!-- Field recorder — primary flow -->
+      <div id="recordZone" class="record-zone">
+        <p id="recordHint" class="record-hint">连接 ESP32 后：开始录音 → 停止 → 命名 → 保存（不用电脑麦克风）。</p>
+
+        <div id="esp32LiveMonitor" class="esp32-live-monitor" aria-live="polite">
+          <span id="esp32LiveLabel" class="esp32-live-label">ESP32 · Arduino 等待数据…</span>
+          <canvas id="esp32LiveWave" class="esp32-live-wave" width="300" height="44" aria-hidden="true"></canvas>
+        </div>
+
+        <div id="recordIdlePanel" class="record-panel">
+          <div class="record-icon-wrap" aria-hidden="true">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+          </div>
+          <p class="record-title">Found a sound?</p>
+          <button id="recordStartBtn" type="button" class="record-start-btn">Start recording</button>
+        </div>
+
+        <div id="recordActivePanel" class="record-panel hidden">
+          <p class="record-live-label">Recording…</p>
+          <canvas id="recordMeterCanvas" class="record-meter" width="320" height="48"></canvas>
+          <p id="recordTimer" class="record-timer">0.0s</p>
+          <p id="recordPointCount" class="record-point-count">硬件数据：0 点</p>
+          <button id="recordStopBtn" type="button" class="record-stop-btn">Stop</button>
+        </div>
+
+        <div id="recordSavePanel" class="record-panel hidden">
+          <button id="recordPreviewBtn" type="button" class="record-play-btn" title="试听录音" aria-label="Play preview">
+            <svg class="icon-play" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M8 5v14l11-7z"/>
+            </svg>
+            <svg class="icon-pause hidden" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+            </svg>
+          </button>
+          <p class="record-save-label">Recording ready</p>
+          <p id="recordSaveSummary" class="record-save-summary"></p>
+          <label class="record-name-label" for="recordNameInput">Name this sound</label>
+          <input id="recordNameInput" class="record-name-input" type="text" maxlength="64" placeholder="e.g. river, bird, footsteps" />
+          <div class="record-save-actions">
+            <button id="recordSaveBtn" type="button" class="record-save-btn">Save to library</button>
+            <button id="recordDiscardBtn" type="button" class="record-discard-btn">Discard</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 临时：本地上传音频 -->
+      <div class="import-toggle-wrap">
+        <button id="openUploadModalBtn" type="button" class="import-toggle">临时：上传本地音频文件</button>
+      </div>
+
+      <!-- Python 声音 → 视觉结构 -->
+      <section class="integration-panel" id="integrationPanel" aria-live="polite">
+        <div class="integration-panel-head">
+          <h2 class="integration-panel-title">Python · 声音 → 视觉结构</h2>
+          <button id="integRefreshBtn" type="button" class="integ-refresh-btn">刷新状态</button>
+        </div>
+        <p class="integration-panel-desc">
+          WAV → Python（<code>localhost:8001</code>）→ 波形 · 频谱 · 声谱图 → 特征 → p5.js Brush 视效
+        </p>
+        <div class="integration-status-row">
+          <span id="integPythonPill" class="integ-pill" data-state="offline">Python · 检测中…</span>
+          <span id="integBridgePill" class="integ-pill" data-state="disconnected">ESP32 桥接 · 检测中…</span>
+        </div>
+        <p id="integHint" class="integ-hint">正在检测服务…</p>
+        <ol id="integSetupList" class="integ-setup-list hidden"></ol>
+      </section>
+
+      <!-- Paint plate — collect brushes (max 5) -->
+      <section class="plate-panel" id="platePanel">
+        <div class="plate-panel-head">
+          <h2 class="plate-panel-title">色盘画板 · Paint Plate</h2>
+          <span id="plateCountLabel" class="plate-count-label">0 / 5 brush</span>
+        </div>
+        <p class="plate-panel-desc">
+          点击下方录音卡片<strong>选择加入画板</strong>（最多 5 段）。完成 Transform 或「分析→应用 Brush」后即可进入色盘绘画。
+        </p>
+        <div id="platePickerGrid" class="plate-picker-grid" role="listbox" aria-label="选择画板录音"></div>
+        <p class="plate-picker-label">已选 brush：</p>
+        <div id="plateBrushChips" class="plate-brush-chips"></div>
+        <div class="plate-panel-actions">
+          <button id="openPlateStudioBtn" type="button" class="plate-open-btn" disabled>进入色盘画板 →</button>
+          <button id="clearPlateBtn" type="button" class="plate-clear-btn">清空选择</button>
+        </div>
+        <p id="plateHint" class="plate-hint"></p>
+      </section>
+
+      <!-- Sound library -->
+      <section class="lib-section">
+        <div class="lib-section-header">
+          <h2 class="lib-section-title">Sound Library <span id="libraryCount" class="lib-count"></span></h2>
+        </div>
+        <div id="libraryCards" class="lib-cards"></div>
+      </section>
+
+    </main>
+  </div><!-- /libraryView -->
+
+
+  <!-- ================================================================
+       TRANSFORM VIEW — transparent sound → visual pipeline
+  ================================================================ -->
+  <div id="transformView" class="view hidden">
+
+    <header class="transform-header">
+      <button id="transformBackBtn" class="back-btn" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Library
+      </button>
+      <div class="analysis-title-block">
+        <h2 id="transformSampleName" class="analysis-sample-name">—</h2>
+        <span id="transformMeta" class="analysis-meta"></span>
+      </div>
+      <div class="transform-step-indicator" id="transformStepIndicator">
+        <span class="ts-step ts-active" data-step="0">Acoustic</span>
+        <span class="ts-arrow">→</span>
+        <span class="ts-step" data-step="1">Extract</span>
+        <span class="ts-arrow">→</span>
+        <span class="ts-step" data-step="2">Map</span>
+        <span class="ts-arrow">→</span>
+        <span class="ts-step" data-step="3">Materialize</span>
+      </div>
+    </header>
+
+    <div class="transform-shell">
+      <main class="transform-main" id="transformMain">
+        <!-- filled by soundTransformView.js -->
+      </main>
+      <aside class="transform-log" id="transformLog">
+        <p class="transform-log-title">Process log</p>
+        <ol class="transform-log-list" id="transformLogList"></ol>
+      </aside>
+    </div>
+
+    <footer class="transform-footer">
+      <p class="transform-footer-hint" id="transformFooterHint">Listening to your sound…</p>
+      <button id="transformContinueBtn" class="transform-continue-btn" type="button" disabled>
+        Enter Visual Studio →
+      </button>
+    </footer>
+  </div><!-- /transformView -->
+
+
+  <!-- ================================================================
+       ANALYSIS VIEW — revealed after selecting a sample
+  ================================================================ -->
+  <div id="analysisView" class="view hidden">
+
+    <header class="analysis-header">
+      <button id="backBtn" class="back-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Library
+      </button>
+      <div class="analysis-title-block">
+        <h2 id="analysisSampleName" class="analysis-sample-name">—</h2>
+        <span id="analysisMeta" class="analysis-meta"></span>
+      </div>
+      <button id="clearCanvasBtn" class="clear-canvas-btn" type="button">Clear drawing</button>
+      <div class="canvas-tool-group" role="group" aria-label="Canvas tools">
+        <button id="canvasToolDrawBtn" type="button" class="canvas-tool-btn is-active" title="绘画 (D)">画笔</button>
+        <button id="canvasToolEraseBtn" type="button" class="canvas-tool-btn" title="气息擦除 (E)">气息擦除</button>
+      </div>
+    </header>
+
+    <div id="plateBrushStrip" class="plate-brush-strip hidden" aria-label="Plate brushes"></div>
+
+    <div class="analysis-shell">
+
+      <!-- Dominant: Visual Generation Area -->
+      <div class="visual-generation-column">
+        <p class="vg-label">Visual Generation Area</p>
+        <div id="canvasHolder" class="canvas-holder"></div>
+      </div>
+
+      <!-- Right: AI Interpretation Panel -->
+      <aside id="interpretationPanel" class="interpretation-panel">
+        <!-- Filled dynamically by app.js -->
+      </aside>
+
+    </div>
+  </div><!-- /analysisView -->
+
+  <div id="systemStatusBar" class="system-status-bar" aria-live="polite">
+    <span id="esp32Status" class="sys-status-pill" data-state="disconnected">ESP32 offline</span>
+    <span id="pythonStatus" class="sys-status-pill" data-state="offline">Python · Offline</span>
+    <span id="pipelineStatus" class="sys-status-pill" data-state="idle">Brush Ready</span>
+  </div>
+
+  <details id="debugPanel" class="debug-panel collapsed">
+    <summary>Debug · Features &amp; Python fusion</summary>
+    <div id="debugPanelBody" class="debug-panel-body"></div>
+  </details>
+
+  <!-- 临时：本地上传弹窗 -->
+  <div id="uploadModal" class="upload-modal hidden" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
+    <div class="upload-modal-backdrop" id="uploadModalBackdrop"></div>
+    <div class="upload-modal-panel">
+      <div class="upload-modal-header">
+        <h2 id="uploadModalTitle" class="upload-modal-title">上传本地音频</h2>
+        <button id="closeUploadModalBtn" type="button" class="upload-modal-close" aria-label="关闭">×</button>
+      </div>
+      <p class="upload-modal-desc">临时调试入口：选择或拖入 WAV / MP3 / M4A 等音频，导入后进入 Transform 流程。</p>
+      <div id="uploadZone" class="upload-zone upload-zone-modal is-open" tabindex="0">
+        <input id="audioFileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aac,.webm" hidden />
+        <div class="upload-inner">
+          <div class="upload-icon-wrap" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 21h14"/>
+            </svg>
+          </div>
+          <p class="upload-prompt">拖放音频到此处，或 <button type="button" class="upload-link" id="uploadBrowseBtn">浏览文件</button></p>
+          <p class="upload-hint">支持常见音频格式 · 仅本地处理，不上传服务器</p>
+        </div>
+      </div>
+      <p id="uploadStatus" class="upload-status" aria-live="polite"></p>
+    </div>
+  </div>
+
+
+  <!-- 声学分析窗口：声音 → 波形 / 频谱 / 声谱图 -->
+  <div id="acousticAnalysisModal" class="acoustic-analysis-modal hidden" role="dialog" aria-modal="true" aria-labelledby="acousticWinTitle">
+    <div class="acoustic-win-backdrop" id="acousticWinBackdrop"></div>
+    <div class="acoustic-win-panel">
+      <header class="acoustic-win-header">
+        <div class="acoustic-win-title-block">
+          <p class="acoustic-win-label">Sound Magic Tablet · 声学分析</p>
+          <h2 id="acousticWinTitle" class="acoustic-win-title">—</h2>
+          <p id="acousticWinMeta" class="acoustic-win-meta"></p>
+        </div>
+        <button id="acousticWinCloseBtn" type="button" class="acoustic-win-close" aria-label="关闭">×</button>
+      </header>
+
+      <div id="acousticWinLoading" class="acoustic-win-loading">
+        <div class="acoustic-win-spinner" aria-hidden="true"></div>
+        <p>Python 正在生成波形、频谱与声谱图…</p>
+      </div>
+
+      <div id="acousticWinBody" class="acoustic-win-body hidden">
+        <p id="acousticWinHint" class="acoustic-win-hint"></p>
+
+        <div class="acoustic-win-grid">
+          <div class="acoustic-win-chart">
+            <p class="acoustic-win-chart-label">Waveform · 波形</p>
+            <canvas id="acousticWinWave" width="880" height="120"></canvas>
+          </div>
+          <div class="acoustic-win-chart">
+            <p class="acoustic-win-chart-label">Spectrogram · 语谱图</p>
+            <canvas id="acousticWinSpec" width="880" height="180"></canvas>
+          </div>
+          <div class="acoustic-win-chart">
+            <p class="acoustic-win-chart-label">Spectrum · 频谱</p>
+            <canvas id="acousticWinSpectrum" width="880" height="120"></canvas>
+          </div>
+        </div>
+
+        <div class="acoustic-win-actions">
+          <button id="acousticWinBrushBtn" type="button" class="acoustic-win-btn primary">应用 Brush → p5 视效</button>
+          <button id="acousticWinTransformBtn" type="button" class="acoustic-win-btn hidden">继续 Transform →</button>
+        </div>
+        <div id="acousticWinExport" class="acoustic-win-export hidden"></div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Scripts — load order matters -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="wavEncoder.js"></script>
+  <script src="esp32Metrics.js"></script>
+  <script src="featureSchema.js"></script>
+  <script src="sampleLibraryStore.js"></script>
+  <script src="plateManager.js"></script>
+  <script src="brushSchema.js"></script>
+  <script src="visualParamFusion.js"></script>
+  <script src="fieldRecorder.js?v=4"></script>
+  <script src="esp32AudioAdapter.js?v=4"></script>
+  <script src="pythonEnhancementClient.js"></script>
+  <script src="serviceConnectionManager.js?v=3"></script>
+  <script src="acousticAnalysisWindow.js"></script>
+  <script src="soundColorEngine.js"></script>
+  <script src="naturalSoundArchetypes.js"></script>
+  <script src="visualPipeline.js"></script>
+  <script src="soundPersonalityAI.js"></script>
+  <script src="visualMapping.js"></script>
+  <script src="visualTransformation.js"></script>
+  <script src="generativeField.js"></script>
+  <script src="playbackAnalyzer.js"></script>
+  <script src="acousticBreathingDriver.js"></script>
+  <script src="featureDebug.js"></script>
+  <script src="membraneSphere.js"></script>
+  <script src="sampleAnalyzer.js"></script>
+  <script src="soundTransformView.js"></script>
+  <script src="brushGenerator.js"></script>
+  <script src="canvasInteraction.js"></script>
+  <script src="app.js?v=3"></script>
+  <script src="sketch.js"></script>
+</body>
+</html>

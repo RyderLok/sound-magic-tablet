@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+
+# Python virtual environments (Windows .venv + Mac .venv-mac)
+.venv/
+.venv-mac/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Secrets & local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# Logs
+logs/
+*.log
+
+# Build / generated output
+dist/
+build/
+out/
+*.egg
+python-service/output/*
+!python-service/output/.gitkeep
+
+# Large archives / packaging (do not sync via git)
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# Local tool caches (keep .cursor/rules in repo)
+.cursor/hooks/
+.cursor/hooks.json
+.codex/

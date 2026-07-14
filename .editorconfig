@@ -1,0 +1,14 @@
+# 减少编辑器在 Mac 上自动改换行符/缩进
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{ps1,bat,cmd}]
+end_of_line = crlf
+
+[*.md]
+trim_trailing_whitespace = false

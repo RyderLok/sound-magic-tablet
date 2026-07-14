@@ -1,0 +1,37 @@
+---
+description: Windows 主开发环境；Mac 为临时会话。保护文件完整性与回 Windows 兼容性。
+alwaysApply: true
+---
+
+# 跨平台安全（Windows ↔ Mac）
+
+本项目在 **Windows 上为主开发/打包环境**。当前可能在 Mac 上临时编辑，修改后需能原样带回 Windows 运行。
+
+## 修改前必须遵守
+
+1. **最小改动**：只改完成任务所必需的文件与行，禁止无关重构、批量格式化、重命名目录。
+2. **不破坏现有内容**：不删除 Windows 专用文件（`.ps1`、`setup-python.ps1`、`start-python.ps1`）；不把 Windows 路径改成 Mac 路径写进共享源码。
+3. **路径写法**：新代码用 `path.join` / `os.path.join` / `pathlib`；禁止在 JS/Python 业务逻辑里硬编码 `C:\` 或 `/Users/`。
+4. **换行符**：不批量转换 CRLF↔LF。保持文件原有换行风格；仅当用户明确要求时才统一。
+5. **虚拟环境与依赖**：
+   - **禁止**修改或覆盖 `python-service/.venv/`（Windows 虚拟环境，含 `Scripts\`）。
+   - Mac 上如需运行 Python，使用 **独立** venv（如 `.venv-mac`）或系统 Python，并在说明中注明，不提交/不打包进 Windows 包。
+   - 不删除 `node_modules`；若需重装，只动 `bridge/`，不动其他目录的依赖树。
+6. **串口**：Windows 默认 `COM3`；Mac 用 `/dev/cu.*`。仅通过 **启动参数或环境变量** 区分，不改共享默认值除非用户要求。
+7. **带回 Windows（用户希望 Mac 上的代码改动同步回 Windows）**：
+   - **必须带走**：`web-demo/` 下所有改过的源码（含 `sampleLibraryStore.js`、`plateManager.js` 等）、`bridge/`、`python-service/*.py`、`esp32/`、`.cursor/rules/`、`.gitattributes`、`.editorconfig`
+   - Mac 辅助脚本（`start-python-mac.sh`、`start-bridge-mac.sh`）可一并带回，与 Windows `.ps1` 并存，互不影响
+   - **不要覆盖 Windows 环境**：`python-service/.venv/`（Windows）、若 `bridge/node_modules` 在 Windows 已正常则不必用 Mac 版整包覆盖
+   - **不要打包**：`python-service/.venv-mac/`、`~/.local/node-*`（本机工具，非项目文件）
+   - 浏览器 IndexedDB 录音库在各机浏览器本地，不随文件夹拷贝；回 Windows 后录音在 Windows 浏览器里重新积累
+
+## 禁止事项
+
+- 全项目 `prettier`/`black`/`eslint --fix` 等批量格式化
+- 把 `README.md` / `技术说明书.md` 里的 Windows 说明改成仅 Mac
+- 用 Mac 生成的 `.venv` 替换 Windows 的 `.venv`
+- 无用户同意时初始化 git、改 `.gitattributes`、或做大规模目录搬迁
+
+## 不确定时
+
+先向用户确认，或只给出命令/说明让用户自行执行，而不是直接改关键配置。

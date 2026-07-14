@@ -1,0 +1,31 @@
+# 保持文本换行稳定，避免 Mac/Windows 来回打包时整文件 diff
+* text=auto
+
+# 源码：检出时按平台，提交时归一化为 LF（git 会按原样保留未跟踪文件的换行）
+*.js   text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.md   text eol=lf
+*.ino  text eol=lf
+*.sh   text eol=lf
+
+# Windows 脚本保持 CRLF
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Python：与当前仓库混用 CRLF/LF 时，提交归一为 LF，减少跨平台噪音
+*.py   text eol=lf
+
+# 二进制与依赖目录不参与换行转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.wav  binary
+*.mp3  binary
+node_modules/** -text
+**/.venv/** -text

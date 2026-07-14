@@ -1,0 +1,73 @@
+---
+description: Windows 主环境启动顺序与命令。从 Mac 带回代码后按此运行。
+alwaysApply: true
+---
+
+# 项目运行手册（Windows 为主）
+
+## 零操作原则（用户从 Mac 迁回）
+
+用户期望：**打开 Cursor、开始对话，Agent 自动跑起来，无需手动敲命令。**
+
+1. 每次 Agent 会话开始，先读 `AGENTS.md`
+2. 检查 `:8000`、`:8001`、`:8765`；未全开则**立即**执行：
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
+   ```
+3. **不要**问用户「要不要启动」——直接做，完成后简短汇报状态
+4. **不要**覆盖 `python-service/.venv/`
+
+项目根 `start-windows.ps1` 会新开 PowerShell 窗口启动 Python / Bridge / 前端，并打开浏览器。
+
+## 启动顺序（必须按序，开 4 个终端）
+
+1. **ESP32** — 固件已烧录；Arduino 串口监视器**必须关闭**
+2. **Bridge** — `bridge/serial-bridge.js` → WebSocket `:8765`
+3. **Python** — FastAPI → `:8001`
+4. **前端** — 静态服务 `web-demo` → `:8000` → 浏览器打开
+
+## Windows 命令（默认）
+
+```powershell
+# 终端 1 — Bridge（COM 口以设备管理器为准）
+cd bridge
+node serial-bridge.js --port COM3 --baud 500000
+
+# 终端 2 — Python（优先用项目脚本 + Windows .venv）
+cd python-service
+.\start-python.ps1
+# 若 .venv 不存在：先 .\setup-python.ps1
+
+# 终端 3 — 前端
+cd web-demo
+npx http-server -p 8000 -c-1
+```
+
+验证：`http://127.0.0.1:8001/health` 返回 ok；Bridge 日志有 `[ws] listening`；浏览器 `http://localhost:8000`。
+
+## Mac 临时命令（仅 Mac，勿写进 Windows 共享逻辑）
+
+```bash
+./bridge/start-bridge-mac.sh          # /dev/cu.usbserial-*
+./python-service/start-python-mac.sh  # 使用 .venv-mac，不碰 .venv
+cd web-demo && python3 -m http.server 8000
+```
+
+## 用户问「帮我跑起来」时
+
+1. 先检测 `:8001`、`:8765`、`:8000` 是否已有进程
+2. 缺什么启动什么；**不要**删除或覆盖 `python-service/.venv/`
+3. 串口：Windows 用 `COM3`（或用户实际端口），Mac 用 `/dev/cu.*`
+4. Bridge 波特率：**500000**
+
+## 前端工作流（2026 Mac 会话新增）
+
+- 录音存 **IndexedDB**（浏览器本地，不随文件夹拷贝）
+- Library 勾选「画板」→ 最多 5 段 → **进入色盘画板**
+- 相关文件：`web-demo/sampleLibraryStore.js`、`plateManager.js`、`app.js`
+
+## 从 Mac 带回 Windows 时
+
+- **带走**：全部改过的源码（尤其 `web-demo/`、`.cursor/rules/`）
+- **不覆盖**：`python-service/.venv/`、`bridge/node_modules/`（Windows 侧若正常）
+- Mac 脚本 `*-mac.sh` 可保留，Windows 继续用 `*.ps1`
