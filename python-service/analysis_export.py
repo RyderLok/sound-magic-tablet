@@ -88,6 +88,8 @@ def build_mode_b_export(
 
     export["brushReady"] = True
 
+    # Local 5-class archetype → visualStructure / strokePattern (brush path).
+    # Qwen semantic recognition is separate (response.semantic); grayscale tests the same 5 ids.
     if len(y) >= 64:
         nat = classify_natural_archetype(y, sr, features)
         export["naturalArchetype"] = nat["archetype"]
@@ -95,6 +97,18 @@ def build_mode_b_export(
         export["archetypeRanked"] = [
             {"id": k, "score": round(v, 3)} for k, v in nat.get("ranked", [])
         ]
+        arch = nat.get("archetype") or {}
+        export["archetypeScores"] = arch.get("scores") or {}
+        export["archetypeScoreGap"] = arch.get("scoreGap") or []
+        export["archetypeAmbiguous"] = bool(arch.get("ambiguous"))
+        export["archetypeMargin"] = arch.get("margin")
+        vs = export.get("visualStructure") or {}
+        if vs.get("ambiguous"):
+            export["visualBlend"] = {
+                "blendWeight": vs.get("blendWeight"),
+                "secondaryArchetypeId": vs.get("secondaryArchetypeId"),
+                "secondaryStrokePattern": vs.get("secondaryStrokePattern"),
+            }
 
     return export
 

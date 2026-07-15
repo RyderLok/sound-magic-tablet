@@ -200,6 +200,8 @@ class PythonEnhancementClient {
       window.activeAcousticViz = data.acoustic || null;
       window.activeShapeProfile = data.acoustic?.shapeProfile || null;
       window.pythonAnalysisExport = data.analysisExport || null;
+      window.pythonSemantic = data.semantic || null;
+      window.pythonSemanticError = data.semanticError || null;
       window.logSoundFingerprint?.(filename, this.lastFeatures, window.activeAcousticViz);
       return data;
     } catch (err) {

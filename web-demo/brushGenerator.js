@@ -208,12 +208,17 @@ class BrushGenerator {
   }
 
   patternProfile(pattern, brush, energy, meta) {
-    const d = this.clamp01(brush.density ?? brush.particleDensity ?? energy);
+    const d = this.clamp01(brush.density ?? brush.particleDensity ?? 0.35);
+    // Radius follows scale/strokeWidth — not the same axis as motion/energy.
+    const scale = this.clamp01(
+      brush.scaleResponse ?? brush.strokeWidth ?? 0.35
+    );
+    const motion = this.clamp01(brush.motion ?? energy ?? 0.35);
     switch (pattern) {
       case "scatter_points":
         return {
           count: Math.floor(lerp(40, 90, d)),
-          radius: lerp(10, 22, energy),
+          radius: lerp(10, 22, scale),
           maxAge: 1,
           pointAlpha: 28,
           trailFade: 10,
@@ -222,38 +227,38 @@ class BrushGenerator {
       case "wave_ripple":
         return {
           count: Math.floor(lerp(180, 280, d)),
-          radius: lerp(20, 38, energy),
+          radius: lerp(20, 38, scale),
           maxAge: 1,
           pointAlpha: 16,
           trailFade: 12,
-          waveFreq: 0.08
+          waveFreq: lerp(0.05, 0.12, motion)
         };
       case "impact_burst":
         return {
           count: Math.floor(lerp(120, 260, d)),
-          radius: meta?.half ? lerp(14, 28, energy) : lerp(28, 52, energy),
+          radius: meta?.half ? lerp(14, 28, scale) : lerp(28, 52, scale),
           maxAge: meta?.burst ? 0.55 : 0.35,
           pointAlpha: 32,
           trailFade: 22,
-          burstForce: meta?.burst ? 1.4 : 0.8
+          burstForce: meta?.burst ? lerp(1.0, 1.6, motion) : lerp(0.6, 1.0, motion)
         };
       case "pulse_grid":
         return {
           count: Math.floor(lerp(100, 200, d)),
-          radius: lerp(14, 30, energy),
+          radius: lerp(14, 30, scale),
           maxAge: 1,
           pointAlpha: 20,
           trailFade: 13,
-          vibrateFreq: lerp(0.06, 0.14, brush.rotationSpeed ?? 0.5)
+          vibrateFreq: lerp(0.06, 0.14, brush.rotationSpeed ?? motion)
         };
       default:
         return {
           count: Math.floor(lerp(260, this.particlesPerCluster, d)),
-          radius: lerp(24, 46, energy) * lerp(0.85, 1.2, brush.scaleResponse ?? brush.strokeWidth ?? 0.3),
+          radius: lerp(24, 46, scale),
           maxAge: 1,
           pointAlpha: this.POINT_ALPHA,
           trailFade: this.TRAIL_FADE,
-          flowStrength: 1
+          flowStrength: lerp(0.7, 1.25, motion)
         };
     }
   }

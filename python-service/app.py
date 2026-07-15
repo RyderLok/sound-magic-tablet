@@ -19,6 +19,7 @@ from schemas import (
     BrushParams,
     FullAnalysisResponse,
     SemanticAnalysis,
+    SemanticError,
     VisualModifiers,
 )
 from visual_mapper import features_to_modifiers, modifiers_to_brush
@@ -81,14 +82,26 @@ async def analyze_wav(file: UploadFile = File(...)) -> FullAnalysisResponse:
     features, modifiers, brush, acoustic, export = analyze_wav_bytes(data)
 
     semantic = None
+    semantic_error = None
     try:
         from siliconflow_omni import analyze_semantic
 
-        raw_semantic = analyze_semantic(data)
+        raw_semantic, raw_error = analyze_semantic(data)
         if raw_semantic:
             semantic = SemanticAnalysis(**raw_semantic)
+            semantic_error = None
+        else:
+            semantic = None
+            semantic_error = SemanticError(**(raw_error or {
+                "code": "unknown",
+                "message": "声音识别失败，请重试",
+            }))
     except Exception:
         semantic = None
+        semantic_error = SemanticError(
+            code="exception",
+            message="声音识别失败，请重试",
+        )
 
     return FullAnalysisResponse(
         features=AudioFeatures(**features),
@@ -98,6 +111,7 @@ async def analyze_wav(file: UploadFile = File(...)) -> FullAnalysisResponse:
         analysisExport=export,
         duration=float(acoustic.get("duration", 0)),
         semantic=semantic,
+        semanticError=semantic_error,
     )
 
 

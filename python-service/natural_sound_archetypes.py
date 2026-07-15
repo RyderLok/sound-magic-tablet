@@ -1,7 +1,7 @@
 """Five natural-sound archetypes → acoustic signatures → visual structure (design doc §3)."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -224,7 +224,12 @@ def _extra_metrics(y: np.ndarray, sr: int) -> Dict[str, float]:
 def classify_natural_archetype(
     y: np.ndarray, sr: int, features: Mapping[str, Any]
 ) -> Dict[str, Any]:
-    """Score each archetype; return best match + visual structure."""
+    """Score each archetype; return best match + visual structure.
+
+    Classes are program-mutually-exclusive (one winner) but not acoustically exclusive.
+    When top-1 and top-2 scores are close, confidence is lowered and numeric template
+    params are lightly blended toward the runner-up (strokePattern stays the winner's).
+    """
     f = dict(features)
     extra = _extra_metrics(y, sr)
     metrics = {**f, **extra}
@@ -272,25 +277,93 @@ def classify_natural_archetype(
 
     ranked: List[Tuple[str, float]] = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     best_id, best_score = ranked[0]
-    second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+    second_id, second_score = ranked[1] if len(ranked) > 1 else (None, 0.0)
+    margin = float(best_score - second_score)
+
+    # Close top-2 → lower reported confidence (score alone overstates certainty).
+    confidence = _margin_adjusted_confidence(best_score, margin)
+    ambiguous = margin < AMBIGUITY_MARGIN
 
     archetype = dict(ARCHETYPES[best_id])
-    archetype["confidence"] = round(best_score, 3)
-    archetype["margin"] = round(best_score - second_score, 3)
+    archetype["confidence"] = round(confidence, 3)
+    archetype["rawScore"] = round(best_score, 3)
+    archetype["margin"] = round(margin, 3)
+    archetype["ambiguous"] = ambiguous
+    archetype["runnerUpId"] = second_id
+    archetype["runnerUpScore"] = round(float(second_score), 3)
     archetype["scores"] = {k: round(v, 3) for k, v in scores.items()}
+    archetype["scoreGap"] = [
+        {"id": k, "score": round(v, 3), "gapFromBest": round(best_score - v, 3)}
+        for k, v in ranked
+    ]
     archetype["metrics"] = {k: round(float(v), 3) for k, v in metrics.items() if k in {
         "crestFactor", "silenceRatio", "onsetRegularity", "onsetDensity",
         "spectralFlatness", "dynamicRange", "treble", "bass", "mid", "zcr", "tempo", "pitch",
     }}
 
-    visual = build_visual_structure(best_id, metrics, best_score)
-    return {"archetype": archetype, "visualStructure": visual, "ranked": ranked[:3]}
+    visual = build_visual_structure(
+        best_id,
+        metrics,
+        confidence,
+        second_id=second_id,
+        margin=margin,
+    )
+    return {"archetype": archetype, "visualStructure": visual, "ranked": ranked}
+
+
+# Below this margin, top-1 vs top-2 is treated as acoustically ambiguous.
+AMBIGUITY_MARGIN = 0.08
+# Max fraction of runner-up template mixed into numeric modifiers/hints.
+BLEND_MAX = 0.35
+
+
+def _margin_adjusted_confidence(best_score: float, margin: float) -> float:
+    """Damp confidence when 1st/2nd place are close (e.g. 0.63 vs 0.59)."""
+    # margin >= 0.15 → full best_score; margin → 0 → ~half certainty factor
+    certainty = 0.5 + 0.5 * clamp01(margin / 0.15)
+    return clamp01(float(best_score) * certainty)
 
 
 def build_visual_structure(
-    archetype_id: str, metrics: Mapping[str, Any], weight: float = 1.0
+    archetype_id: str,
+    metrics: Mapping[str, Any],
+    weight: float = 1.0,
+    second_id: Optional[str] = None,
+    margin: float = 1.0,
 ) -> Dict[str, Any]:
-    """Blend archetype template with measured features for p5 brush assist."""
+    """Blend archetype template with measured features for p5 brush assist.
+
+    When margin is small, numeric modifiers/brushHints lean slightly toward the
+    runner-up template. strokePattern / motionModel stay on the winner (stable brush family).
+    """
+    primary = _template_visual(archetype_id, metrics, weight)
+    blend_w = 0.0
+    if second_id and second_id != archetype_id and margin < AMBIGUITY_MARGIN:
+        blend_w = clamp01(1.0 - margin / AMBIGUITY_MARGIN) * BLEND_MAX
+        secondary = _template_visual(second_id, metrics, weight)
+        primary["modifiers"] = _blend_numeric_maps(
+            primary.get("modifiers") or {},
+            secondary.get("modifiers") or {},
+            blend_w,
+        )
+        primary["brushHints"] = _blend_numeric_maps(
+            primary.get("brushHints") or {},
+            secondary.get("brushHints") or {},
+            blend_w,
+        )
+        primary["secondaryArchetypeId"] = second_id
+        primary["secondaryStrokePattern"] = secondary.get("strokePattern")
+        primary["secondaryMotionModel"] = secondary.get("motionModel")
+
+    primary["ambiguous"] = bool(blend_w > 0)
+    primary["blendWeight"] = round(float(blend_w), 3)
+    primary["margin"] = round(float(margin), 3)
+    return primary
+
+
+def _template_visual(
+    archetype_id: str, metrics: Mapping[str, Any], weight: float
+) -> Dict[str, Any]:
     base = dict(VISUAL_STRUCTURES.get(archetype_id, VISUAL_STRUCTURES["water"]))
     w = clamp01(weight)
     mods = {}
@@ -321,3 +394,22 @@ def build_visual_structure(
         "brushHints": brush,
         "acousticMapping": ARCHETYPES.get(archetype_id, {}),
     }
+
+
+def _blend_numeric_maps(
+    primary: Mapping[str, Any], secondary: Mapping[str, Any], t: float
+) -> Dict[str, float]:
+    """primary*(1-t) + secondary*t for shared numeric keys."""
+    t = clamp01(t)
+    keys = set(primary.keys()) | set(secondary.keys())
+    out: Dict[str, float] = {}
+    for k in keys:
+        a = primary.get(k)
+        b = secondary.get(k)
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            out[k] = round(clamp01(float(a) * (1.0 - t) + float(b) * t), 3)
+        elif isinstance(a, (int, float)):
+            out[k] = round(clamp01(float(a)), 3)
+        elif isinstance(b, (int, float)):
+            out[k] = round(clamp01(float(b)), 3)
+    return out

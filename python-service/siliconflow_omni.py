@@ -1,8 +1,8 @@
-"""Optional SiliconFlow Qwen3-Omni open-ended audio semantic analysis.
+"""SiliconFlow Qwen3-Omni — grayscale semantic recognition (5 natural-sound classes).
 
 Uses SILICONFLOW_API_KEY / SILICONFLOW_OMNI_MODEL / SILICONFLOW_BASE_URL.
-Does not modify naturalArchetype, strokePattern, or brushParams.
-On any failure returns None (callers set semantic=null).
+Qwen is the sole semantic source (no local classify fallback for semantic).
+Does not modify strokePattern or brushParams (those stay on local acoustic path).
 Never logs the API key.
 """
 from __future__ import annotations
@@ -12,9 +12,10 @@ import json
 import logging
 import os
 import re
+import socket
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("siliconflow_omni")
 
@@ -22,17 +23,40 @@ DEFAULT_MODEL = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 DEFAULT_BASE = "https://api.siliconflow.cn/v1"
 REQUEST_TIMEOUT_SEC = 60.0
 
+# Grayscale: same five classes as local natural_sound_archetypes
+ARCHETYPE_IDS = (
+    "birds",
+    "wind_leaves",
+    "water",
+    "material_impact",
+    "insects_amphibians",
+)
+ARCHETYPE_LABELS_ZH = {
+    "birds": "鸟类",
+    "wind_leaves": "风与树叶",
+    "water": "水",
+    "material_impact": "自然材质交互",
+    "insects_amphibians": "昆虫与两栖动物",
+}
+
 PROMPT = (
-    "请开放识别这段录音里听到的内容，不要限制在预设类别。\n"
-    "只返回 JSON，不要 markdown，不要其它文字。字段：\n"
+    "你在做灰度测试：请把这段自然声录音归入下列五类之一（必须选一类）。\n"
+    "birds — 鸟鸣、啾啾、间歇短脉冲、静音多\n"
+    "wind_leaves — 风声、树叶沙沙、连续噪声纹理\n"
+    "water — 流水、滴水、浪花、柔和起伏\n"
+    "material_impact — 敲击、碰撞、折断、突发冲击后衰减\n"
+    "insects_amphibians — 虫鸣、蝉鸣、蛙叫、规律重复脉冲\n"
+    "若混合声，选最突出的一类；不确定时仍选最接近的一类并降低 confidence。\n"
+    "只返回 JSON，不要 markdown，不要其它文字：\n"
     "{\n"
-    '  "soundLabel": "简短声音标签（中文或英文）",\n'
+    '  "archetype": "birds|wind_leaves|water|material_impact|insects_amphibians",\n'
+    '  "soundLabel": "与该类对应的短标签（可用中文）",\n'
     '  "description": "对听到内容的客观描述",\n'
     '  "possibleSources": ["可能的声源1", "可能的声源2"],\n'
     '  "audibleEvents": ["可听事件1", "可听事件2"],\n'
     '  "confidence": 0.0\n'
     "}\n"
-    "confidence 为 0~1；不确定时仍给出最可能判断并降低 confidence。"
+    "confidence 为 0~1。"
 )
 
 
@@ -49,13 +73,30 @@ def status() -> Dict[str, Any]:
         "configured": is_configured(),
         "model": os.environ.get("SILICONFLOW_OMNI_MODEL", DEFAULT_MODEL),
         "baseUrl": os.environ.get("SILICONFLOW_BASE_URL", DEFAULT_BASE),
+        "soleSemanticSource": "qwen3-omni",
+        "grayscaleArchetypes": list(ARCHETYPE_IDS),
     }
 
 
-def analyze_semantic(wav_bytes: bytes) -> Optional[Dict[str, Any]]:
-    """Analyze WAV with Qwen3-Omni; return semantic dict or None."""
-    if not is_configured() or not wav_bytes:
-        return None
+def _error(code: str, detail: str = "") -> Dict[str, str]:
+    out = {"code": code, "message": "声音识别失败，请重试"}
+    if detail:
+        out["detail"] = detail[:120]
+    return out
+
+
+def analyze_semantic(
+    wav_bytes: bytes,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+    """Call Qwen3-Omni for 5-class grayscale semantic recognition.
+
+    Returns (semantic, None) on success, or (None, semanticError) on failure.
+    """
+    if not wav_bytes:
+        return None, _error("empty_audio")
+
+    if not is_configured():
+        return None, _error("not_configured")
 
     api_key = (os.environ.get("SILICONFLOW_API_KEY") or "").strip()
     model = os.environ.get("SILICONFLOW_OMNI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
@@ -71,7 +112,10 @@ def analyze_semantic(wav_bytes: bytes) -> Optional[Dict[str, Any]]:
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是音频内容识别助手。根据录音客观描述听到的声音，只输出 JSON。",
+                    "content": (
+                        "你是自然声音五类分类助手（灰度测试）。"
+                        "只能输出 JSON，archetype 必须是五类之一。"
+                    ),
                 },
                 {
                     "role": "user",
@@ -103,26 +147,59 @@ def analyze_semantic(wav_bytes: bytes) -> Optional[Dict[str, Any]]:
         normalized = _normalize_semantic(parsed)
         if not normalized:
             logger.warning("Omni semantic response invalid or incomplete")
-            return None
+            return None, _error("invalid_response")
         normalized["model"] = model
         normalized["provider"] = "siliconflow"
-        return normalized
+        return normalized, None
+    except socket.timeout:
+        logger.warning("Omni semantic timeout")
+        return None, _error("timeout")
+    except TimeoutError:
+        logger.warning("Omni semantic timeout")
+        return None, _error("timeout")
+    except urllib.error.URLError as exc:
+        reason = type(getattr(exc, "reason", None) or exc).__name__
+        if "timed out" in str(exc).lower() or reason in ("timeout", "TimeoutError"):
+            logger.warning("Omni semantic timeout")
+            return None, _error("timeout")
+        logger.warning("Omni semantic URL error type=%s", reason)
+        return None, _error("network_error")
     except urllib.error.HTTPError as exc:
-        # Do not log response body (may echo request metadata); code only.
         logger.warning("Omni semantic HTTP error status=%s", exc.code)
-        return None
+        return None, _error("http_error", f"status_{exc.code}")
     except Exception as exc:
         logger.warning("Omni semantic failed: %s", type(exc).__name__)
-        return None
+        return None, _error("exception", type(exc).__name__)
 
 
 def _normalize_semantic(parsed: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not isinstance(parsed, dict):
         return None
+
+    raw_arch = str(parsed.get("archetype") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    # light aliasing for common mistakes
+    aliases = {
+        "bird": "birds",
+        "wind": "wind_leaves",
+        "leaves": "wind_leaves",
+        "leaf": "wind_leaves",
+        "impact": "material_impact",
+        "material": "material_impact",
+        "insect": "insects_amphibians",
+        "insects": "insects_amphibians",
+        "amphibian": "insects_amphibians",
+        "amphibians": "insects_amphibians",
+    }
+    archetype = aliases.get(raw_arch, raw_arch)
+    if archetype not in ARCHETYPE_IDS:
+        return None
+
     label = str(parsed.get("soundLabel") or "").strip()
     description = str(parsed.get("description") or "").strip()
-    if not label and not description:
-        return None
+    if not label:
+        label = ARCHETYPE_LABELS_ZH.get(archetype, archetype)
+    if not description:
+        description = label
 
     sources = _as_str_list(parsed.get("possibleSources"))
     events = _as_str_list(parsed.get("audibleEvents"))
@@ -133,8 +210,10 @@ def _normalize_semantic(parsed: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     conf = max(0.0, min(1.0, conf))
 
     return {
-        "soundLabel": (label or description[:40])[:120],
-        "description": (description or label)[:800],
+        "archetype": archetype,
+        "archetypeLabelZh": ARCHETYPE_LABELS_ZH[archetype],
+        "soundLabel": label[:120],
+        "description": description[:800],
         "possibleSources": sources[:12],
         "audibleEvents": events[:12],
         "confidence": round(conf, 3),

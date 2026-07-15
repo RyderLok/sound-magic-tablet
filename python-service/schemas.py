@@ -82,7 +82,9 @@ class AcousticVisualization(BaseModel):
 
 
 class SemanticAnalysis(BaseModel):
-    """Open-ended Qwen3-Omni audio understanding (optional)."""
+    """Qwen3-Omni grayscale 5-class semantic recognition (sole semantic source)."""
+    archetype: str = ""
+    archetypeLabelZh: str = ""
     soundLabel: str = ""
     description: str = ""
     possibleSources: List[str] = Field(default_factory=list)
@@ -90,6 +92,13 @@ class SemanticAnalysis(BaseModel):
     confidence: float = 0.0
     model: Optional[str] = None
     provider: Optional[str] = None
+
+
+class SemanticError(BaseModel):
+    """Present when Qwen semantic recognition fails; no local classification fallback."""
+    code: str = "unknown"
+    message: str = "声音识别失败，请重试"
+    detail: Optional[str] = None
 
 
 class FullAnalysisResponse(BaseModel):
@@ -100,3 +109,4 @@ class FullAnalysisResponse(BaseModel):
     analysisExport: dict = Field(default_factory=dict)
     duration: float = 0.0
     semantic: Optional[SemanticAnalysis] = None
+    semanticError: Optional[SemanticError] = None

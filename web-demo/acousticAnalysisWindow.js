@@ -122,7 +122,13 @@ class AcousticAnalysisWindow {
     }
 
     this.updateStatus(pyData);
-    this.renderExportPanel(pyData?.analysisExport, pyData?.features, pyData?.brushParams);
+    this.renderExportPanel(
+      pyData?.analysisExport,
+      pyData?.features,
+      pyData?.brushParams,
+      pyData?.semantic,
+      pyData?.semanticError
+    );
 
     if (this.els.brushBtn) {
       this.els.brushBtn.disabled = !pyData?.brushParams;
@@ -135,32 +141,52 @@ class AcousticAnalysisWindow {
       this.els.hint.textContent = "Python 服务不可用 — 请运行 python-service\\start-python.ps1";
       return;
     }
+    if (!pyData.semantic && pyData.semanticError) {
+      this.els.hint.textContent = "声音识别失败，请重试";
+      return;
+    }
     const ac = pyData.acoustic || {};
-    this.els.hint.textContent =
+    const label = pyData.semantic?.archetypeLabelZh || pyData.semantic?.soundLabel;
+    const base =
       `视觉结构就绪 · 波形 ${ac.waveform?.length || 0} 点 · ` +
       `频谱 ${ac.spectrum?.length || 0} bins · ` +
       `声谱图 ${ac.spectrogram?.length || 0}×${ac.spectrogram?.[0]?.length || 0}`;
+    this.els.hint.textContent = label ? `${base} · 识别：${label}` : base;
   }
 
-  renderExportPanel(analysisExport, features, brushParams) {
+  renderExportPanel(analysisExport, features, brushParams, semantic, semanticError) {
     const el = this.els.exportPanel;
     if (!el) return;
-    if (!analysisExport && !features) {
+    if (!analysisExport && !features && !semantic && !semanticError) {
       el.classList.add("hidden");
       el.innerHTML = "";
       return;
     }
     el.classList.remove("hidden");
     const exp = analysisExport || {};
-    const arch = exp.naturalArchetype;
+    const archLocal = exp.naturalArchetype;
     const vs = exp.visualStructure;
     const shape = exp.shapeProfile || window.activeAcousticViz?.shapeProfile || {};
     const fmt = (v) => (v == null ? "—" : v);
     const pct = (v) => `${Math.round((v || 0) * 100)}%`;
+    let semanticBlock = "";
+    if (semantic) {
+      const sources = (semantic.possibleSources || []).join("、") || "—";
+      const events = (semantic.audibleEvents || []).join("、") || "—";
+      const archZh = semantic.archetypeLabelZh || semantic.soundLabel || semantic.archetype || "—";
+      semanticBlock = `
+        <p class="acoustic-export-arch"><b>Qwen 五类识别</b>${archZh} · 置信 ${pct(semantic.confidence)}</p>
+        <p class="acoustic-export-vs">${semantic.description || ""}</p>
+        <p class="acoustic-export-vs"><b>可能声源</b>${sources} · <b>事件</b>${events}</p>`;
+    } else if (semanticError) {
+      semanticBlock = `<p class="acoustic-export-arch acoustic-export-error"><b>语义识别</b>声音识别失败，请重试</p>`;
+    }
     el.innerHTML = `
       <p class="acoustic-export-title">声音 → 视觉结构 · 特征导出</p>
-      ${arch ? `<p class="acoustic-export-arch"><b>自然声类型</b>${arch.labelZh} · 匹配 ${pct(arch.confidence)}</p>` : ""}
-      ${vs ? `<p class="acoustic-export-vs"><b>视觉笔刷</b>${NaturalSoundArchetypes?.patternLabels?.[vs.strokePattern]?.zh || vs.strokePattern} · ${vs.motionModel} · ${vs.texturePattern}</p>` : ""}
+      ${semanticBlock}
+      ${archLocal ? `<p class="acoustic-export-arch"><b>本地五类（笔刷结构）</b>${archLocal.labelZh || archLocal.id} · 置信 ${pct(archLocal.confidence)}${archLocal.ambiguous ? " · 分差接近（参数轻融合）" : ""}${archLocal.margin != null ? ` · margin ${Number(archLocal.margin).toFixed(3)}` : ""}</p>` : ""}
+      ${archLocal?.scores ? `<p class="acoustic-export-vs"><b>各类得分</b>${Object.entries(archLocal.scores).map(([k, v]) => `${k} ${Number(v).toFixed(2)}`).join(" · ")}</p>` : ""}
+      ${vs ? `<p class="acoustic-export-vs"><b>视觉笔刷</b>${NaturalSoundArchetypes?.patternLabels?.[vs.strokePattern]?.zh || vs.strokePattern} · ${vs.motionModel} · ${vs.texturePattern}${vs.blendWeight ? ` · blend ${Math.round(vs.blendWeight * 100)}%→${vs.secondaryArchetypeId || ""}` : ""}</p>` : ""}
       <div class="acoustic-export-grid">
         <div class="acoustic-export-item"><b>时长</b>${fmt(exp.duration)}s · ${fmt(exp.sampleRate)} Hz</div>
         <div class="acoustic-export-item"><b>基音</b>${fmt(exp.pitchHz)} Hz</div>
@@ -183,6 +209,8 @@ class AcousticAnalysisWindow {
 
     window.pythonAnalysisExport = pyData.analysisExport || null;
     window.pythonVisualStructure = pyData.analysisExport?.visualStructure || null;
+    window.pythonSemantic = pyData.semantic || null;
+    window.pythonSemanticError = pyData.semanticError || null;
 
     if (window.App?.visualMappingEngine && window.App?.soundPersonalityAI && features) {
       const aiResult = window.App.soundPersonalityAI.computeAll(features);
@@ -247,6 +275,8 @@ class AcousticAnalysisWindow {
         sample.features = FeatureSchema.mergeFeatures(sample.features || {}, features, 0.6);
         sample.pythonAnalysis = pyData.analysisExport;
         sample.pythonBrush = brush;
+        sample.pythonSemantic = pyData.semantic || null;
+        sample.pythonSemanticError = pyData.semanticError || null;
         sample.acoustic = pyData.acoustic || null;
         sample.shapeProfile = pyData.acoustic?.shapeProfile || null;
         sample.visualParams = visualParams;

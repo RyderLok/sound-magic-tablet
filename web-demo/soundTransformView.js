@@ -216,6 +216,18 @@ class SoundTransformView {
         Math.round((pyData.duration || sample.duration || 0) * 10) / 10 + "s · " +
         `${ac.waveform?.length || 0} 波形点`
       );
+      const hint = document.getElementById("tsAcousticHint");
+      if (!pyData.semantic && pyData.semanticError) {
+        if (hint) hint.textContent = "声音识别失败，请重试";
+        this.addLog("声音识别失败，请重试", true);
+        if (this.els.hint) this.els.hint.textContent = "声音识别失败，请重试";
+      } else if (pyData.semantic?.archetype || pyData.semantic?.soundLabel) {
+        const zh = pyData.semantic.archetypeLabelZh || pyData.semantic.soundLabel;
+        if (hint) {
+          hint.textContent = `Qwen 五类识别：${zh}`;
+        }
+        this.addLog("Qwen 五类识别 · " + zh);
+      }
     } else {
       if (win) win.showResults(null, { sampleId: sample.id });
       const hint = document.getElementById("tsAcousticHint");
