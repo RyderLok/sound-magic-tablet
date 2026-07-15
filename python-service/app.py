@@ -22,7 +22,7 @@ from schemas import (
 )
 from visual_mapper import features_to_modifiers, modifiers_to_brush
 
-app = FastAPI(title="Sound Magic Python Enhancement", version="1.0.0")
+app = FastAPI(title="Piko Python Enhancement", version="1.0.0")
 smoother = EmaSmoother(alpha=0.28)
 
 app.add_middleware(

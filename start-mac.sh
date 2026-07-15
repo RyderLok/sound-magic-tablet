@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 PORT="${SERIAL_PORT:-/dev/cu.usbserial-0001}"
 BAUD="${SERIAL_BAUD:-500000}"
 
-echo "Sound Magic Tablet — Mac bootstrap"
+echo "Piko — Mac bootstrap"
 echo "Project: $ROOT"
 
 test_port() {

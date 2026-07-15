@@ -1,4 +1,4 @@
-"""Sound Magic Tablet — Python enhancement service configuration."""
+"""Piko — Python enhancement service configuration."""
 from pathlib import Path
 
 HOST = "0.0.0.0"

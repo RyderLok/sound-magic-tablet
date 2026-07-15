@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  Sound Magic Tablet — Windows 一键启动
+  Piko — Windows 一键启动
   用法：在项目根目录
     .\start-windows.ps1
   或双击 / Cursor Agent 自动调用
@@ -34,7 +34,7 @@ function Start-ServiceWindow([string]$Title, [string]$WorkDir, [string]$Command)
 }
 
 Write-Host ""
-Write-Host "Sound Magic Tablet — Windows bootstrap" -ForegroundColor Cyan
+Write-Host "Piko — Windows bootstrap" -ForegroundColor Cyan
 Write-Host "Project: $Root"
 Write-Host ""
 

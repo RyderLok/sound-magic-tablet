@@ -2,7 +2,7 @@
   "name": "sound-magic-serial-bridge",
   "version": "1.0.0",
   "private": true,
-  "description": "ESP32 INMP441 serial → WebSocket bridge for Sound Magic Tablet",
+  "description": "ESP32 INMP441 serial → WebSocket bridge for Piko",
   "main": "serial-bridge.js",
   "scripts": {
     "start": "node serial-bridge.js"

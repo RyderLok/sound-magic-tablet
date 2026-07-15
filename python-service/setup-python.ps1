@@ -1,4 +1,4 @@
-# One-time Python environment setup for Sound Magic Tablet
+# One-time Python environment setup for Piko
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 

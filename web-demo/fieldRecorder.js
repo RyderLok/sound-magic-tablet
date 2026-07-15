@@ -205,14 +205,18 @@ class FieldRecorder {
     this.bindElements();
 
     const esp = this.getAdapter();
-    if (!this.isInmp441Ready(esp)) {
-      if (!options.fromHardware) {
+    // Hardware button / PCM arm must never be blocked by a stale serialOpen flag.
+    // UI button still requires full INMP441 readiness.
+    if (!options.fromHardware) {
+      if (!this.isInmp441Ready(esp)) {
         alert(
           esp?.isWsOpen() && esp.serialOpen === false
             ? this.serialErrorMessage()
             : this.hardwareErrorMessage()
         );
+        return;
       }
+    } else if (!esp?.isWsOpen()) {
       return;
     }
 
@@ -295,7 +299,17 @@ class FieldRecorder {
   }
 
   async stop(options = {}) {
-    if (!this.recording) return;
+    if (!this.recording) {
+      // Hardware already stopped but UI never entered recording — resync idle UI.
+      if (options.fromHardware) {
+        this.setPanel("idle");
+        if (this.els.hint) {
+          this.els.hint.textContent =
+            "收音仅走 ESP32 + INMP441：开始录音 → 停止 → 命名 → 保存（不用电脑麦克风）。";
+        }
+      }
+      return;
+    }
 
     const esp = this.getAdapter();
     this.recording = false;

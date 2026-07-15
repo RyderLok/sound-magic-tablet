@@ -1,4 +1,4 @@
-# Sound Magic Tablet — ESP32 Live Audio Pipeline
+# Piko — ESP32 Live Audio Pipeline
 
 > **完整产品技术说明：** 见 [`技术说明书.md`](./技术说明书.md)（架构、工作流、模块、协议、部署）  
 > **修改记录：** 见 [`CHANGELOG.md`](./CHANGELOG.md) 或说明书 §17

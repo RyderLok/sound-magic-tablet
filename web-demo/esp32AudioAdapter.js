@@ -224,6 +224,10 @@ class Esp32AudioAdapter {
       this.lastMessageAt = Date.now();
       this.updateStatus("connected");
       this.updateLiveMonitor();
+      // Resync Keyes/UI if ESP32 is already recording when the page connects.
+      if (parsed.recording === true && typeof this.onHardwareRecord === "function") {
+        this.onHardwareRecord({ status: "started", source: "bridge_sync", timestamp: parsed.timestamp });
+      }
       return;
     }
 

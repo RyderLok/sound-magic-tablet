@@ -1,4 +1,4 @@
-# Start Sound Magic Python enhancement service (port 8001)
+# Start Piko Python enhancement service (port 8001)
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Py = Join-Path $Root ".venv\Scripts\python.exe"
 

@@ -1,4 +1,4 @@
-# Sound Magic Tablet — Cursor Agent 说明
+# Piko — Cursor Agent 说明
 
 用户从 Mac 迁回 Windows 后，**期望零手动配置**：Agent 应自动把项目跑起来，不要反复问「要不要启动服务」。
 
