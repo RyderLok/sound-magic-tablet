@@ -31,6 +31,15 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
 - 录音持久化：`web-demo/sampleLibraryStore.js`（IndexedDB，浏览器本地）
 - 画板多 brush：`web-demo/plateManager.js`（最多 5 段，共享 plate）
 
+## 可选：SiliconFlow Qwen3-Omni 语义分析
+
+- 配置：`python-service/.env`（自 `.env.example` 复制，**勿提交** `.env`）
+- 环境变量：`SILICONFLOW_API_KEY`、`SILICONFLOW_OMNI_MODEL`、`SILICONFLOW_BASE_URL`
+- 生效点：`POST /analyze/wav` → 响应字段 `semantic`（开放音频描述）
+- **不**覆盖本地 `naturalArchetype` / `strokePattern` / `brushParams`；失败则为 `null`
+- 验证：`http://127.0.0.1:8001/health` 中 `omni.configured === true`
+- **禁止**把 API Key 写进前端或对话日志
+
 ## 用户只说「跑起来 / 继续 / vibe coding」时
 
 视为已授权自动启动上述服务，然后继续其请求的任务。

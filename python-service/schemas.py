@@ -81,6 +81,17 @@ class AcousticVisualization(BaseModel):
     duration: float = 0.0
 
 
+class SemanticAnalysis(BaseModel):
+    """Open-ended Qwen3-Omni audio understanding (optional)."""
+    soundLabel: str = ""
+    description: str = ""
+    possibleSources: List[str] = Field(default_factory=list)
+    audibleEvents: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    model: Optional[str] = None
+    provider: Optional[str] = None
+
+
 class FullAnalysisResponse(BaseModel):
     features: AudioFeatures
     visualModifiers: VisualModifiers
@@ -88,3 +99,4 @@ class FullAnalysisResponse(BaseModel):
     acoustic: AcousticVisualization
     analysisExport: dict = Field(default_factory=dict)
     duration: float = 0.0
+    semantic: Optional[SemanticAnalysis] = None

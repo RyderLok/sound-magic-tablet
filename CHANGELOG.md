@@ -17,6 +17,16 @@ Piko 项目变更日志。**最新记录在顶部。**
 
 ---
 
+### 2026-07-15 · v1.3 — SiliconFlow Qwen3-Omni 语义分析
+
+| 项 | 内容 |
+|----|------|
+| **摘要** | `/analyze/wav` 可选接入硅基流动 `Qwen/Qwen3-Omni-30B-A3B-Instruct`，返回开放识别字段 `semantic`；失败为 `null`，不改写本地 archetype / brush |
+| **涉及文件** | `python-service/siliconflow_omni.py`、`app.py`、`schemas.py`、`config.py`、`.env.example`、`README.md`、`技术说明书.md`、`AGENTS.md` |
+| **原因/备注** | Key 仅服务端 `.env`；`health.omni.configured` 可检查是否启用 |
+
+---
+
 ### 2026-06-17 · v1.2 — ESP32 硬件 PCM 录音
 
 | 项 | 内容 |

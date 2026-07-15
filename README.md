@@ -128,8 +128,38 @@ http://localhost:8000
 2. **Spectrum** — frequency energy distribution  
 3. **Spectrogram** — time–frequency map  
 4. **Features** — MFCC, bands, tempo, pitch → **Brush** → p5.js visuals  
+5. **Semantic (optional)** — SiliconFlow `Qwen/Qwen3-Omni-30B-A3B-Instruct` open-ended audio understanding → `semantic` field  
 
 API: `POST http://localhost:8001/analyze/wav` (multipart WAV file)
+
+### Optional: SiliconFlow Qwen3-Omni semantic analysis
+
+Server-side only (API Key never sent to the browser). When configured, `/analyze/wav` adds:
+
+```json
+"semantic": {
+  "soundLabel": "...",
+  "description": "...",
+  "possibleSources": ["..."],
+  "audibleEvents": ["..."],
+  "confidence": 0.0
+}
+```
+
+- Does **not** override local `naturalArchetype` / `strokePattern` / `brushParams`
+- On missing key, timeout, or parse failure → `semantic: null` (local analysis unchanged)
+
+Setup:
+
+```bash
+cd python-service
+cp .env.example .env
+# edit .env → set SILICONFLOW_API_KEY=sk-...
+# restart Python service
+```
+
+Env vars: `SILICONFLOW_API_KEY`, `SILICONFLOW_OMNI_MODEL`, `SILICONFLOW_BASE_URL`, `SILICONFLOW_OMNI_ENABLED`  
+Health: `http://127.0.0.1:8001/health` → `omni.configured`
 
 ## WebSocket message format
 
@@ -159,7 +189,9 @@ API: `POST http://localhost:8001/analyze/wav` (multipart WAV file)
 | `web-demo/esp32AudioAdapter.js` | Browser WebSocket client |
 | `web-demo/pythonEnhancementClient.js` | Python WebSocket + REST client |
 | `web-demo/featureSchema.js` | Unified feature schema adapter |
-| `python-service/app.py` | FastAPI + librosa analysis |
+| `python-service/app.py` | FastAPI + librosa analysis + optional `semantic` |
+| `python-service/siliconflow_omni.py` | SiliconFlow Qwen3-Omni semantic analysis |
+| `python-service/.env.example` | Env template for Omni (copy to `.env`, gitignored) |
 | `web-demo/generativeField.js` | Sound breathing (ESP32-aware) |
 | `web-demo/brushGenerator.js` | Draw brush (ESP32-aware) |
 | `web-demo/sampleLibraryStore.js` | IndexedDB 录音持久化 |

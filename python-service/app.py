@@ -18,6 +18,7 @@ from schemas import (
     AudioFrameMessage,
     BrushParams,
     FullAnalysisResponse,
+    SemanticAnalysis,
     VisualModifiers,
 )
 from visual_mapper import features_to_modifiers, modifiers_to_brush
@@ -38,6 +39,13 @@ app.add_middleware(
 def health() -> Dict[str, Any]:
     base = f"http://127.0.0.1:{config.PORT}"
     ws = f"ws://127.0.0.1:{config.PORT}{config.WS_AUDIO_PATH}"
+    omni = {"configured": False}
+    try:
+        from siliconflow_omni import status as omni_status
+
+        omni = omni_status()
+    except Exception:
+        pass
     return {
         "status": "ok",
         "http": base,
@@ -50,7 +58,16 @@ def health() -> Dict[str, Any]:
         "librosa": _librosa_flag(),
         "sampleRate": config.SAMPLE_RATE,
         "analysisHz": config.ANALYSIS_TARGET_HZ,
-        "pipeline": ["WAV", "waveform", "spectrum", "spectrogram", "features", "brush"],
+        "omni": omni,
+        "pipeline": [
+            "WAV",
+            "waveform",
+            "spectrum",
+            "spectrogram",
+            "features",
+            "brush",
+            "semantic?",
+        ],
     }
 
 
@@ -63,6 +80,16 @@ async def analyze_wav(file: UploadFile = File(...)) -> FullAnalysisResponse:
 
     features, modifiers, brush, acoustic, export = analyze_wav_bytes(data)
 
+    semantic = None
+    try:
+        from siliconflow_omni import analyze_semantic
+
+        raw_semantic = analyze_semantic(data)
+        if raw_semantic:
+            semantic = SemanticAnalysis(**raw_semantic)
+    except Exception:
+        semantic = None
+
     return FullAnalysisResponse(
         features=AudioFeatures(**features),
         visualModifiers=VisualModifiers(**modifiers),
@@ -70,6 +97,7 @@ async def analyze_wav(file: UploadFile = File(...)) -> FullAnalysisResponse:
         acoustic=acoustic,  # type: ignore[arg-type]
         analysisExport=export,
         duration=float(acoustic.get("duration", 0)),
+        semantic=semantic,
     )
 
 
