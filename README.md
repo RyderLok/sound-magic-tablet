@@ -1,9 +1,12 @@
 # Piko — ESP32 Live Audio Pipeline
 
 > **完整产品技术说明：** 见 [`技术说明书.md`](./技术说明书.md)（架构、工作流、模块、协议、部署）  
+> **UI 设计 PRD / 信息架构：** 见 [`UI设计PRD与信息架构.md`](./UI设计PRD与信息架构.md)（页面树、交互主路径、验收标准）  
 > **修改记录：** 见 [`CHANGELOG.md`](./CHANGELOG.md) 或说明书 §17
 
 Real-time path from **ESP32 + INMP441** to **p5.js** generative visual system, with **Python** turning sound into visual structure (waveform, spectrum, spectrogram → features → brush).
+
+**产品流：** Collect（Library 录音）→ Transform（材料化）→ Draw（单样本或色盘 Plate ≤5）。语义识别（Qwen 五类）只解释声音，不覆盖本地笔触造型。
 
 ```
 ESP32 (INMP441 I2S)
@@ -128,16 +131,18 @@ http://localhost:8000
 2. **Spectrum** — frequency energy distribution  
 3. **Spectrogram** — time–frequency map  
 4. **Features** — MFCC, bands, tempo, pitch → **Brush** → p5.js visuals  
-5. **Semantic (optional)** — SiliconFlow `Qwen/Qwen3-Omni-30B-A3B-Instruct` open-ended audio understanding → `semantic` field  
+5. **Semantic (grayscale)** — SiliconFlow `Qwen/Qwen3-Omni-30B-A3B-Instruct` → 五类自然声 `semantic`（与本地 archetype 同 id）  
 
 API: `POST http://localhost:8001/analyze/wav` (multipart WAV file)
 
-### Optional: SiliconFlow Qwen3-Omni semantic analysis
+### SiliconFlow Qwen3-Omni semantic analysis（灰度五类）
 
 Server-side only (API Key never sent to the browser). When configured, `/analyze/wav` adds:
 
 ```json
 "semantic": {
+  "archetype": "birds|wind_leaves|water|material_impact|insects_amphibians",
+  "archetypeLabelZh": "...",
   "soundLabel": "...",
   "description": "...",
   "possibleSources": ["..."],
@@ -146,8 +151,8 @@ Server-side only (API Key never sent to the browser). When configured, `/analyze
 }
 ```
 
-- Does **not** override local `naturalArchetype` / `strokePattern` / `brushParams`
-- On missing key, timeout, or parse failure → `semantic: null` (local analysis unchanged)
+- Qwen is the **sole semantic** source; does **not** override local `strokePattern` / `brushParams`
+- On missing key, timeout, or parse failure → `semantic: null` + `semanticError`（UI：声音识别失败，请重试）
 
 Setup:
 
@@ -196,6 +201,7 @@ Health: `http://127.0.0.1:8001/health` → `omni.configured`
 | `web-demo/brushGenerator.js` | Draw brush (ESP32-aware) |
 | `web-demo/sampleLibraryStore.js` | IndexedDB 录音持久化 |
 | `web-demo/plateManager.js` | 画板多 brush（最多 5） |
+| `UI设计PRD与信息架构.md` | UI / IA / 轻量 PRD（设计用） |
 | `python-service/start-python.ps1` | Windows 一键启动 Python |
 | `bridge/start-bridge-mac.sh` | Mac 临时 Bridge（可选） |
 

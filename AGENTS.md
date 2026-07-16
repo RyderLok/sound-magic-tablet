@@ -2,6 +2,8 @@
 
 用户从 Mac 迁回 Windows 后，**期望零手动配置**：Agent 应自动把项目跑起来，不要反复问「要不要启动服务」。
 
+文档：[`README.md`](./README.md) · [`技术说明书.md`](./技术说明书.md) · [`UI设计PRD与信息架构.md`](./UI设计PRD与信息架构.md)
+
 ## 打开本项目后（Windows，优先）
 
 1. **立刻检查** `127.0.0.1:8000`、`8001`、`8765` 是否在监听
@@ -35,8 +37,8 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
 
 - 配置：`python-service/.env`（自 `.env.example` 复制，**勿提交** `.env`）
 - 环境变量：`SILICONFLOW_API_KEY`、`SILICONFLOW_OMNI_MODEL`、`SILICONFLOW_BASE_URL`
-- 生效点：`POST /analyze/wav` → 响应字段 `semantic`（开放音频描述）
-- **不**覆盖本地 `naturalArchetype` / `strokePattern` / `brushParams`；失败则为 `null`
+- 生效点：`POST /analyze/wav` → `semantic`（灰度五类，与本地 archetype 同 id）
+- **不**覆盖本地 `strokePattern` / `brushParams`；失败则为 `null` + `semanticError`
 - 验证：`http://127.0.0.1:8001/health` 中 `omni.configured === true`
 - **禁止**把 API Key 写进前端或对话日志
 

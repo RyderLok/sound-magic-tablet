@@ -17,11 +17,21 @@ Piko 项目变更日志。**最新记录在顶部。**
 
 ---
 
+### 2026-07-16 · v1.4 — UI PRD/IA 文档 + 产品流对齐
+
+| 项 | 内容 |
+|----|------|
+| **摘要** | 新增 `UI设计PRD与信息架构.md`；README / 技术说明书对齐 Collect→Transform→Draw、Plate≤5、Qwen 灰度五类、IndexedDB |
+| **涉及文件** | `UI设计PRD与信息架构.md`、`README.md`、`技术说明书.md`、`CHANGELOG.md` |
+| **原因/备注** | 供 UI 设计直接使用；技术细节仍以说明书为准 |
+
+---
+
 ### 2026-07-15 · v1.3 — SiliconFlow Qwen3-Omni 语义分析
 
 | 项 | 内容 |
 |----|------|
-| **摘要** | `/analyze/wav` 可选接入硅基流动 `Qwen/Qwen3-Omni-30B-A3B-Instruct`，返回开放识别字段 `semantic`；失败为 `null`，不改写本地 archetype / brush |
+| **摘要** | `/analyze/wav` 可选接入硅基流动 `Qwen/Qwen3-Omni-30B-A3B-Instruct`，返回 `semantic`；失败为 `null`，不改写本地 brush（后续灰度五类见 v1.4） |
 | **涉及文件** | `python-service/siliconflow_omni.py`、`app.py`、`schemas.py`、`config.py`、`.env.example`、`README.md`、`技术说明书.md`、`AGENTS.md` |
 | **原因/备注** | Key 仅服务端 `.env`；`health.omni.configured` 可检查是否启用 |
 

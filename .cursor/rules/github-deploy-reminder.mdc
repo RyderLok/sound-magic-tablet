@@ -1,0 +1,25 @@
+---
+description: Remind user to deploy (commit+push) to GitHub when local work is ahead
+alwaysApply: true
+---
+
+# GitHub 部署提醒
+
+用户希望被**定时/适时提醒**是否要把代码部署到 GitHub。
+
+## 何时检查
+
+1. **会话开始**：先快速看 `git status` / 是否领先 `origin/main`
+2. **完成一块有意义的改动后**（功能、修 bug、多文件编辑）：提醒一次
+3. **本会话若有定时 loop**：到点再查一次
+
+## 提醒怎么说
+
+- 有**未提交改动**或**未推送 commit** → 简短问：「本地有未同步到 GitHub 的改动，要现在部署（commit + push）吗？」
+- 已与 `origin/main` 同步且工作区干净 → **不要反复打扰**；最多一句「GitHub 已是最新」
+- **不要**在用户未明确同意时自行 commit / push
+- **不要**提交 `.env`、密钥、`python-service/.venv/`
+
+## 部署含义（本项目）
+
+「部署到 GitHub」= `git add` 相关源码 → `commit` → `push origin main`（仓库 https://github.com/RyderLok/sound-magic-tablet）
