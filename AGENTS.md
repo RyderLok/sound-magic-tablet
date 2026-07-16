@@ -43,3 +43,21 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
 ## 用户只说「跑起来 / 继续 / vibe coding」时
 
 视为已授权自动启动上述服务，然后继续其请求的任务。
+
+## Cursor Cloud specific instructions
+
+云端 VM 是 **Linux**，没有 ESP32/INMP441 硬件串口，`.ps1` / `start-mac.sh` 都不适用。启动脚本已在 VM 启动时自动装好依赖（Python venv + bridge npm）。
+
+**Python 虚拟环境**：云端用独立的 `python-service/.venv-linux/`（已在 `.gitignore`），**不要**碰 Windows `.venv` 或 Mac `.venv-mac`。系统依赖 `python3.12-venv` 已装进快照。
+
+**如何运行（云端 Linux）：**
+
+- Python 服务 `:8001`：`cd python-service && .venv-linux/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8001`
+  - 健康检查：`curl http://127.0.0.1:8001/health`（`status:ok`、`librosa:true`）
+- 前端 `:8000`：`cd web-demo && npx --yes http-server -p 8000 -c-1`（纯静态，无需安装依赖）
+- 测试：`cd python-service && .venv-linux/bin/python -m pytest -q`
+- Bridge `:8765`：**依赖物理 ESP32 串口，云端无法真机运行**；硬件实时录音/直播流在云端无法完整验证。
+
+**无硬件测端到端**：用前端 Library 页的「临时：上传本地音频文件」入口上传一个 WAV → 走完 Collect→Transform→Draw（`POST /analyze/wav` 即核心分析管线）。这是云端验证功能的推荐路径。
+
+**画板绘画注意**：笔迹只在中间白色画布区（画布右侧 ~72%，`画笔` 工具激活时）内、按住鼠标**缓慢拖动**才会采样生成；快速点一下不出笔迹。`SILICONFLOW_API_KEY` 未配置时 `semantic` 为 `null`（本地分析不受影响）。
