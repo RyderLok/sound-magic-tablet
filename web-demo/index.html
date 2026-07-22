@@ -31,7 +31,7 @@
 
       <!-- Field recorder — primary flow -->
       <div id="recordZone" class="record-zone">
-        <p id="recordHint" class="record-hint">收音仅走 ESP32 + INMP441：开始录音 → 停止 → 命名 → 保存（不用电脑麦克风）。</p>
+        <p id="recordHint" class="record-hint">收音仅走 ESP32 + INMP441：开始录音 → 停止（最长 20s）→ 命名 → 保存（不用电脑麦克风）。</p>
 
         <div id="esp32LiveMonitor" class="esp32-live-monitor" aria-live="polite">
           <span id="esp32LiveLabel" class="esp32-live-label">ESP32 · Arduino 等待数据…</span>
@@ -53,7 +53,7 @@
         <div id="recordActivePanel" class="record-panel hidden">
           <p class="record-live-label">Recording…</p>
           <canvas id="recordMeterCanvas" class="record-meter" width="320" height="48"></canvas>
-          <p id="recordTimer" class="record-timer">0.0s</p>
+          <p id="recordTimer" class="record-timer">0.0 / 20s</p>
           <p id="recordPointCount" class="record-point-count">INMP441 PCM：0 KB</p>
           <button id="recordStopBtn" type="button" class="record-stop-btn">Stop</button>
         </div>

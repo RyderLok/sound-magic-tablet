@@ -1,5 +1,7 @@
 // Field recorder — ESP32 hardware stream only (no computer microphone).
 class FieldRecorder {
+  static MAX_DURATION_SEC = 20;
+
   constructor(app) {
     this.app = app;
     this.recording = false;
@@ -18,6 +20,7 @@ class FieldRecorder {
     this.previewAudio = null;
     this.previewUrl = null;
     this.previewPlaying = false;
+    this._stoppingForLimit = false;
   }
 
   bindElements() {
@@ -224,6 +227,7 @@ class FieldRecorder {
     this.metricsBuffer = [];
     this.pcmChunks = [];
     this.recording = true;
+    this._stoppingForLimit = false;
     this.startTime = Date.now();
     this.lastSampleAt = 0;
     this.usedPcmPath = false;
@@ -278,10 +282,15 @@ class FieldRecorder {
     this.pushMetricSample(true);
 
     this.setPanel("active");
+    if (this.els.timer) {
+      this.els.timer.textContent = `0.0 / ${FieldRecorder.MAX_DURATION_SEC}s`;
+      this.els.timer.classList.remove("is-near-limit");
+    }
     if (this.els.hint) {
+      const maxLabel = `最长 ${FieldRecorder.MAX_DURATION_SEC}s`;
       this.els.hint.textContent = options.fromHardware
-        ? "INMP441 录音中… 再按 Keyes 或点 Stop 结束。"
-        : "INMP441 录音中… 点 Stop 结束（不用电脑麦克风）。";
+        ? `INMP441 录音中… ${maxLabel}，再按 Keyes 或点 Stop 结束。`
+        : `INMP441 录音中… ${maxLabel}，点 Stop 结束（不用电脑麦克风）。`;
     }
     this.startMeterLoop();
   }
@@ -305,7 +314,7 @@ class FieldRecorder {
         this.setPanel("idle");
         if (this.els.hint) {
           this.els.hint.textContent =
-            "收音仅走 ESP32 + INMP441：开始录音 → 停止 → 命名 → 保存（不用电脑麦克风）。";
+            "收音仅走 ESP32 + INMP441：开始录音 → 停止（最长 20s）→ 命名 → 保存（不用电脑麦克风）。";
         }
       }
       return;
@@ -313,11 +322,15 @@ class FieldRecorder {
 
     const esp = this.getAdapter();
     this.recording = false;
+    this._stoppingForLimit = false;
     this.stopMeterLoop();
 
     this.pushMetricSample(true);
 
-    const duration = (Date.now() - this.startTime) / 1000;
+    const duration = Math.min(
+      (Date.now() - this.startTime) / 1000,
+      FieldRecorder.MAX_DURATION_SEC
+    );
 
     if (esp) {
       esp.onMetrics = null;
@@ -386,8 +399,9 @@ class FieldRecorder {
         `${this.app.formatDuration(duration)} · INMP441 PCM ${pcmKb} KB · 峰值 ${maxPct}%`;
     }
     if (this.els.hint) {
-      this.els.hint.textContent =
-        "INMP441 录音已停止。点 ▶ 试听真实硬件原声，命名后 Save。";
+      this.els.hint.textContent = options.autoLimit
+        ? `已达 ${FieldRecorder.MAX_DURATION_SEC}s 上限，自动停止。点 ▶ 试听真实硬件原声，命名后 Save。`
+        : "INMP441 录音已停止。点 ▶ 试听真实硬件原声，命名后 Save。";
     }
 
     this.setPreviewPlaying(false);
@@ -453,6 +467,7 @@ class FieldRecorder {
     const w = canvas.width;
     const h = canvas.height;
 
+    const maxSec = FieldRecorder.MAX_DURATION_SEC;
     const tick = () => {
       if (!this.recording) return;
 
@@ -477,8 +492,17 @@ class FieldRecorder {
           `INMP441 PCM：${pcmKb} KB · 点 ${this.metricsBuffer.length}`;
       }
 
+      const elapsed = (Date.now() - this.startTime) / 1000;
+      const shown = Math.min(elapsed, maxSec);
       if (this.els.timer) {
-        this.els.timer.textContent = ((Date.now() - this.startTime) / 1000).toFixed(1) + "s";
+        this.els.timer.textContent = `${shown.toFixed(1)} / ${maxSec}s`;
+        this.els.timer.classList.toggle("is-near-limit", shown >= maxSec - 3);
+      }
+
+      if (elapsed >= maxSec && !this._stoppingForLimit) {
+        this._stoppingForLimit = true;
+        this.stop({ autoLimit: true });
+        return;
       }
 
       this.meterFrame = requestAnimationFrame(tick);
