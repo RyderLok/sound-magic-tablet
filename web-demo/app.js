@@ -815,39 +815,100 @@ const App = {
     });
   },
 
-  drawMiniWaveform(canvas, data, accent) {
+  drawMiniWaveform(canvas, data, accent, progress) {
     const ctx = canvas.getContext("2d");
     const w = canvas.width;
     const h = canvas.height;
     const mid = h / 2;
-    const color = accent ? `rgb(${accent.r},${accent.g},${accent.b})` : "#6a5a8a";
+    const color = accent ? `rgb(${accent.r},${accent.g},${accent.b})` : "#F16E1C";
+    const muted = "rgba(241, 110, 28, 0.28)";
+    const p = Math.max(0, Math.min(1, progress == null ? 1 : progress));
+    const split = Math.round(w * p);
 
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#f5f4f8";
+    ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, w, h);
 
-    ctx.beginPath();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.2;
-    for (let i = 0; i < w; i++) {
-      const idx = Math.min(Math.floor(i * data.length / w), data.length - 1);
-      const y = mid + data[idx] * mid * 0.82;
-      if (i === 0) ctx.moveTo(i, y); else ctx.lineTo(i, y);
+    const strokeWave = (fromX, toX, stroke) => {
+      if (toX <= fromX) return;
+      ctx.beginPath();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.4;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      for (let i = fromX; i < toX; i++) {
+        const idx = Math.min(Math.floor(i * data.length / w), data.length - 1);
+        const y = mid + data[idx] * mid * 0.82;
+        if (i === fromX) ctx.moveTo(i, y);
+        else ctx.lineTo(i, y);
+      }
+      ctx.stroke();
+    };
+
+    // 未播：淡色；已播：实色（progress 省略时整段实色）
+    if (progress == null) {
+      strokeWave(0, w, color);
+    } else {
+      strokeWave(0, split, color);
+      strokeWave(split, w, muted);
+      if (p > 0 && p < 1) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(split + 0.5, 4);
+        ctx.lineTo(split + 0.5, h - 4);
+        ctx.stroke();
+      }
     }
-    ctx.stroke();
   },
 
   setPlayButtonState(sampleId, playing) {
-    const btn = document.querySelector(`[data-play-id="${sampleId}"]`);
-    if (btn) {
+    document.querySelectorAll(`[data-play-id="${sampleId}"]`).forEach((btn) => {
       btn.classList.toggle("is-playing", playing);
       btn.querySelector(".icon-play")?.classList.toggle("hidden", playing);
       btn.querySelector(".icon-pause")?.classList.toggle("hidden", !playing);
       btn.title = playing ? "Pause" : "Play";
+      btn.setAttribute("aria-label", playing ? "暂停" : "播放");
+    });
+  },
+
+  _paintPlaybackWaveforms(sampleId, progress) {
+    const sample = this.soundLibrary.find((s) => s.id === sampleId);
+    if (!sample?.waveformSnapshot?.length) return;
+    const accent = sample.visualParams?.palette?.[0] || { r: 241, g: 110, b: 28 };
+    ["pw-", "lw-", "bw-"].forEach((prefix) => {
+      const cvs = document.getElementById(prefix + sampleId);
+      if (cvs) this.drawMiniWaveform(cvs, sample.waveformSnapshot, accent, progress);
+    });
+  },
+
+  _stopPlaybackScrubber() {
+    if (this._scrubRaf != null) {
+      cancelAnimationFrame(this._scrubRaf);
+      this._scrubRaf = null;
     }
   },
 
+  _startPlaybackScrubber() {
+    this._stopPlaybackScrubber();
+    const tick = () => {
+      const audio = this.playbackAudio;
+      const id = this.playbackSampleId;
+      if (!audio || !id || audio.paused) {
+        this._scrubRaf = null;
+        return;
+      }
+      const dur = audio.duration;
+      const p = Number.isFinite(dur) && dur > 0 ? audio.currentTime / dur : 0;
+      this._paintPlaybackWaveforms(id, p);
+      this._scrubRaf = requestAnimationFrame(tick);
+    };
+    this._scrubRaf = requestAnimationFrame(tick);
+  },
+
   stopPlayback() {
+    this._stopPlaybackScrubber();
+    const endedId = this.playbackSampleId;
     if (this.playbackAudio) {
       this.playbackAudio.pause();
       this.playbackAudio.onended = null;
@@ -861,8 +922,9 @@ const App = {
       URL.revokeObjectURL(this.playbackUrl);
       this.playbackUrl = null;
     }
-    if (this.playbackSampleId) {
-      this.setPlayButtonState(this.playbackSampleId, false);
+    if (endedId) {
+      this.setPlayButtonState(endedId, false);
+      this._paintPlaybackWaveforms(endedId, null);
       this.playbackSampleId = null;
     }
   },
@@ -912,14 +974,19 @@ const App = {
 
     if (this.playbackSampleId === sampleId && this.playbackAudio && !this.playbackAudio.paused) {
       this.playbackAudio.pause();
+      this._stopPlaybackScrubber();
       this.setPlayButtonState(sampleId, false);
       return;
     }
 
     if (this.playbackSampleId === sampleId && this.playbackAudio?.paused) {
       this._resumePlaybackAudioCtx();
-      this.playbackAudio.play().catch(e => console.warn("Playback error:", e));
-      this.setPlayButtonState(sampleId, true);
+      this.playbackAudio.play()
+        .then(() => {
+          this.setPlayButtonState(sampleId, true);
+          this._startPlaybackScrubber();
+        })
+        .catch(e => console.warn("Playback error:", e));
       return;
     }
 
@@ -935,6 +1002,7 @@ const App = {
       .then(() => audio.play())
       .then(() => {
         this.setPlayButtonState(sampleId, true);
+        this._startPlaybackScrubber();
         if (window.activeAudioFeatures !== sample.features && sample.features) {
           window.activeAudioFeatures = sample.features;
         }

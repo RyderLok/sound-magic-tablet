@@ -353,6 +353,59 @@ button {
 .collect-tile[data-piko-go="draw"] .tile-icon-glyph { width: 88px; height: 81px; }
 .collect-tile[data-piko-go="gallery"] .tile-icon-glyph { width: 76px; height: 80px; }
 
+/* Input 波形图标 · 声音起伏微动效
+   每条竖线绕自身中心做 scaleY 呼吸；周期/振幅各不相同，
+   避免七条线整齐同步而显得像单纯的缩放。中间线最活跃，两端最克制。 */
+.tile-wave-bar {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tile-wave var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+
+@keyframes tile-wave {
+  from { transform: scaleY(var(--min)); }
+  to   { transform: scaleY(1); }
+}
+
+.tile-wave-bar[data-b="1"] { --min: 0.66; --dur: 1000ms; --delay: 230ms; }
+.tile-wave-bar[data-b="2"] { --min: 0.52; --dur: 1450ms; --delay: 140ms; }
+.tile-wave-bar[data-b="3"] { --min: 0.58; --dur: 950ms;  --delay: 60ms; }
+.tile-wave-bar[data-b="4"] { --min: 0.46; --dur: 1300ms; --delay: 0ms; }
+.tile-wave-bar[data-b="5"] { --min: 0.56; --dur: 1100ms; --delay: 190ms; }
+.tile-wave-bar[data-b="6"] { --min: 0.51; --dur: 1400ms; --delay: 80ms; }
+.tile-wave-bar[data-b="7"] { --min: 0.68; --dur: 1050ms; --delay: 300ms; }
+
+/* 录音笔就绪时波动更明显一些 */
+.collect-status.is-ready ~ .collect-tiles .tile-wave-bar,
+.piko-collect:has(.collect-status.is-ready) .tile-wave-bar {
+  animation-duration: calc(var(--dur) * 0.72);
+}
+
+/* Draw 调色盘图标 · 笔轻擦调色盘的微动效
+   笔杆绕右上「握持端」小角度摆动，同时沿自身轴向蹭进蹭出，
+   笔尖行程约占图标 5%，是擦碰而不是挥笔。 */
+.tile-draw-brush {
+  transform-box: fill-box;
+  transform-origin: 96% 17%;
+  animation: tile-draw-graze 2800ms ease-in-out infinite;
+}
+
+/* 轴向单位向量约 (-0.95, 0.31)：位移沿笔杆方向，蹭向调色盘 */
+@keyframes tile-draw-graze {
+  0%, 100% { transform: rotate(0deg) translate(0, 0); }
+  14%      { transform: rotate(-2.4deg) translate(-1.9px, 0.6px); }
+  28%      { transform: rotate(0.9deg) translate(0.5px, -0.2px); }
+  44%      { transform: rotate(-3.2deg) translate(-2.6px, 0.85px); }
+  58%      { transform: rotate(0.5deg) translate(0.3px, -0.1px); }
+  72%      { transform: rotate(-1.4deg) translate(-1.1px, 0.35px); }
+  86%      { transform: rotate(0.2deg) translate(0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-wave-bar,
+  .tile-draw-brush { animation: none; }
+}
+
 /* 磁贴标签 */
 .tile-label {
   position: absolute;
@@ -473,14 +526,16 @@ button {
   height: 27.52px;
 }
 
-/* 卡片轨道 · 首卡 (30,227)，卡 219×379，间距 59 */
+/* 卡片轨道 · 首卡 (30,227)，卡 219×379，间距 59
+   轨道上下各留 14px：卡片投影(0 4px 4px)和 hover 抬升都在盒子外，
+   高度与卡片等高时会被 overflow 裁掉。top 相应上移，卡片仍落在 227。 */
 .sounds-track {
   position: absolute;
   left: 0;
-  top: 227px;
+  top: 213px;
   width: 100%;
-  height: 379px;
-  padding: 0 30px;
+  height: 407px;
+  padding: 14px 30px;
   display: flex;
   gap: 59px;
   overflow-x: auto;
@@ -605,8 +660,16 @@ button {
   cursor: pointer;
 }
 
-.sound-play img { display: block; width: 100%; height: 100%; }
+.sound-play img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.sound-play .hidden { display: none !important; }
 .sound-play:hover { transform: scale(1.06); }
+.sound-play.is-playing { transform: none; }
 
 /* 时长 · 居中 卡内 y=331 */
 .sound-dur {
@@ -684,6 +747,22 @@ button {
   height: 369px;
 }
 
+/* shader 球接管后，PNG 与 SVG 光晕退场（着色器自带辉光） */
+.magic-orb-wrap.has-orb-canvas .magic-orb,
+.magic-orb-wrap.has-orb-canvas .magic-orb-glow {
+  display: none;
+}
+
+.magic-orb-canvas {
+  position: absolute;
+  left: -70px;
+  top: -70px;
+  width: 509px;
+  height: 509px;
+  display: block;
+  pointer-events: none;
+}
+
 .magic-orb-glow {
   position: absolute;
   left: -70px;
@@ -732,12 +811,26 @@ button {
 .magic-pill-star {
   width: 20px;
   height: 20px;
-  animation: magic-star-twinkle 1.8s ease-in-out infinite;
+  transform-origin: center;
+  animation: magic-star-twinkle 4s linear infinite;
 }
 
+/* 旋转与闪烁共用 transform，故合并为一条 4s 曲线：
+   每 12.5% 匀速转 45°（linear 保证转速恒定），闪烁在其中走两个柔和的余弦周期 */
 @keyframes magic-star-twinkle {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.82); }
+  0%     { opacity: 1;     transform: rotate(0deg)   scale(1); }
+  12.5%  { opacity: 0.725; transform: rotate(45deg)  scale(0.91); }
+  25%    { opacity: 0.45;  transform: rotate(90deg)  scale(0.82); }
+  37.5%  { opacity: 0.725; transform: rotate(135deg) scale(0.91); }
+  50%    { opacity: 1;     transform: rotate(180deg) scale(1); }
+  62.5%  { opacity: 0.725; transform: rotate(225deg) scale(0.91); }
+  75%    { opacity: 0.45;  transform: rotate(270deg) scale(0.82); }
+  87.5%  { opacity: 0.725; transform: rotate(315deg) scale(0.91); }
+  100%   { opacity: 1;     transform: rotate(360deg) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .magic-pill-star { animation: none; }
 }
 
 /* ============================================================
@@ -812,7 +905,14 @@ button {
   cursor: pointer;
 }
 
-.brush-row-play img { display: block; width: 100%; height: 100%; }
+.brush-row-play img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.brush-row-play .hidden { display: none !important; }
 
 .brush-row-name {
   position: absolute;
@@ -898,7 +998,7 @@ button {
   font-weight: 600;
 }
 
-/* 预览板（动效占位） */
+/* 预览板 · 实时笔刷动态展示 */
 .brush-preview-panel {
   position: absolute;
   left: 417px;

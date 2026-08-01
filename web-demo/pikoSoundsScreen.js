@@ -69,7 +69,8 @@
           '<p class="sound-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</p>' +
           '<div class="sound-wave-slot"><canvas id="pw-' + escapeHtml(s.id) + '" width="195" height="54"></canvas></div>' +
           '<button type="button" class="sound-play" data-play-id="' + escapeHtml(s.id) + '" title="播放">' +
-            '<img src="piko-assets/icon-play.svg" alt="播放" />' +
+            '<img class="icon-play" src="piko-assets/icon-play.svg" alt="播放" />' +
+            '<img class="icon-pause hidden" src="piko-assets/icon-pause.svg" alt="暂停" />' +
           '</button>' +
           '<p class="sound-dur">' + escapeHtml(formatDuration(s.duration)) + '</p>' +
         '</div>';
@@ -77,6 +78,22 @@
 
     drawCanvases(list);
     updateFooter();
+    syncPlaybackUi();
+  }
+
+  /** 重绘卡片后恢复播放中按钮 / 波形进度，避免被 innerHTML 冲掉 */
+  function syncPlaybackUi() {
+    var a = app();
+    if (!a || !a.playbackSampleId) return;
+    var playing = !!(a.playbackAudio && !a.playbackAudio.paused);
+    if (typeof a.setPlayButtonState === 'function') {
+      a.setPlayButtonState(a.playbackSampleId, playing);
+    }
+    if (playing && typeof a._paintPlaybackWaveforms === 'function' && a.playbackAudio) {
+      var dur = a.playbackAudio.duration || 0;
+      var p = dur > 0 ? a.playbackAudio.currentTime / dur : 0;
+      a._paintPlaybackWaveforms(a.playbackSampleId, p);
+    }
   }
 
   function drawCanvases(list) {
