@@ -1,11 +1,14 @@
-"""Mode B — structured analysis export for p5.js / brush pipeline."""
+"""Mode B — structured analysis export for p5.js / brush pipeline.
+
+Category / strokePattern come from Qwen (applied in app.py via brush_mapper).
+Local analysis only contributes acoustic measurements — not sound class.
+"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 import numpy as np
 
-from natural_sound_archetypes import classify_natural_archetype
 from feature_normalizer import clamp01
 
 
@@ -14,6 +17,12 @@ def build_mode_b_export(
     sr: int,
     features: Mapping[str, Any],
     acoustic: Mapping[str, Any],
+    *,
+    acoustic_features: Optional[Mapping[str, float]] = None,
+    category: Optional[str] = None,
+    stroke_pattern: Optional[str] = None,
+    visual_structure: Optional[Mapping[str, Any]] = None,
+    brush_params: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Professional analysis package: spectral stats + brush-ready features."""
     duration = float(acoustic.get("duration") or len(y) / max(1, sr))
@@ -21,9 +30,10 @@ def build_mode_b_export(
         "mode": "B",
         "pipeline": [
             "ESP32/WAV capture",
-            "Python librosa — waveform / spectrum / spectrogram",
-            "Feature export → visual structure",
-            "p5.js brush + generative output",
+            "Python librosa — acoustic features (no local class)",
+            "Qwen category → strokePattern",
+            "Acoustic within-class → brushParams",
+            "p5.js BrushGenerator (five patterns)",
         ],
         "duration": round(duration, 4),
         "sampleRate": int(sr),
@@ -53,6 +63,17 @@ def build_mode_b_export(
         "shapeProfile": dict(acoustic.get("shapeProfile") or {}),
     }
 
+    if acoustic_features:
+        export["acousticFeatures"] = dict(acoustic_features)
+    if category:
+        export["category"] = category
+    if stroke_pattern:
+        export["strokePattern"] = stroke_pattern
+    if visual_structure:
+        export["visualStructure"] = dict(visual_structure)
+    if brush_params:
+        export["brushParams"] = dict(brush_params)
+
     try:
         import librosa
 
@@ -65,7 +86,7 @@ def build_mode_b_export(
             export["spectralCentroidHz"] = round(float(np.mean(cent)), 2)
             try:
                 tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-                export["tempoBpm"] = round(float(tempo), 2)
+                export["tempoBpm"] = round(float(np.atleast_1d(tempo)[0]), 2)
             except Exception:
                 export["tempoBpm"] = None
             try:
@@ -86,30 +107,9 @@ def build_mode_b_export(
         export["mfcc"] = []
         export["chroma"] = []
 
-    export["brushReady"] = True
-
-    # Local 5-class archetype → visualStructure / strokePattern (brush path).
-    # Qwen semantic recognition is separate (response.semantic); grayscale tests the same 5 ids.
-    if len(y) >= 64:
-        nat = classify_natural_archetype(y, sr, features)
-        export["naturalArchetype"] = nat["archetype"]
-        export["visualStructure"] = nat["visualStructure"]
-        export["archetypeRanked"] = [
-            {"id": k, "score": round(v, 3)} for k, v in nat.get("ranked", [])
-        ]
-        arch = nat.get("archetype") or {}
-        export["archetypeScores"] = arch.get("scores") or {}
-        export["archetypeScoreGap"] = arch.get("scoreGap") or []
-        export["archetypeAmbiguous"] = bool(arch.get("ambiguous"))
-        export["archetypeMargin"] = arch.get("margin")
-        vs = export.get("visualStructure") or {}
-        if vs.get("ambiguous"):
-            export["visualBlend"] = {
-                "blendWeight": vs.get("blendWeight"),
-                "secondaryArchetypeId": vs.get("secondaryArchetypeId"),
-                "secondaryStrokePattern": vs.get("secondaryStrokePattern"),
-            }
-
+    # brushReady when we have acoustic features; category optional until Qwen returns
+    export["brushReady"] = bool(acoustic_features or features)
+    export["categorySource"] = "qwen" if category else None
     return export
 
 

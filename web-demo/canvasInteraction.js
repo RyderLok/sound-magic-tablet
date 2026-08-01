@@ -20,7 +20,36 @@ class CanvasInteraction {
     this.canvasTool = "draw";
     this._strokeActive = false;
     this.lastMouse = { x: 0, y: 0 };
+    this._pressStartedOnUi = false;
+    this._pointerOverUi = false;
+    this._installUiGuard();
     this.clear();
+  }
+
+  // p5 的 mouseIsPressed / mouseX 是全局量：按在浮层 UI（画布顶栏等）上也会为真，
+  // 全幅模式下整块画布都是绘制区，于是点按钮会在其下方留笔迹。
+  // 这里记录指针是否落在 UI 上，绘制时据此跳过。
+  _installUiGuard() {
+    const isUi = (node) =>
+      !!(node && node.closest && node.closest(".piko-canvas-chrome, .piko-ui-layer"));
+
+    document.addEventListener("pointerdown", (e) => {
+      this._pressStartedOnUi = isUi(e.target);
+      this._pointerOverUi = this._pressStartedOnUi;
+    }, true);
+
+    document.addEventListener("pointermove", (e) => {
+      this._pointerOverUi = isUi(e.target);
+    }, true);
+
+    const release = () => { this._pressStartedOnUi = false; };
+    document.addEventListener("pointerup", release, true);
+    document.addEventListener("pointercancel", release, true);
+  }
+
+  /** 指针压在 UI 上、或拖到 UI 上方时不落笔 */
+  isPointerOnUi() {
+    return this._pressStartedOnUi || this._pointerOverUi;
   }
 
   // DOM overlay that hosts the Three.js sphere directly over the left zone.
@@ -203,6 +232,18 @@ class CanvasInteraction {
   }
 
   layout() {
+    // Figma P6：纯白全幅画布，不显示 materials 条 / 左侧球体
+    if (this.isPikoCanvasMode()) {
+      return {
+        materialsTop: 0,
+        materialsHeight: 0,
+        creativeTop: 0,
+        creativeH: height,
+        leftZone:   { x: 0, y: 0, w: 0, h: 0 },
+        centerZone: { x: 0, y: 0, w: width, h: height },
+        pikoFull: true
+      };
+    }
     const materialsH = Math.max(72, Math.floor(height * 0.14));
     const creativeTop = materialsH + 4;
     const creativeH = Math.max(1, height - creativeTop - 8);
@@ -218,23 +259,33 @@ class CanvasInteraction {
     };
   }
 
+  isPikoCanvasMode() {
+    return !!document.getElementById("analysisView")?.classList.contains("piko-canvas-mode");
+  }
+
   updateAndDraw(visualParameters, personalityVector, aiResult) {
     const l = this.layout();
     this.drawPaper();
 
-    // The membrane sphere renders itself into its own DOM canvas (own RAF loop).
-    // p5 only positions the host element over the left zone.
-    this._positionSphereHost(l.leftZone);
-    this._feedSphereAudio();
-    this._feedSphereShape();
-    if (this.leftField?.updatePalette) {
-      this.leftField.updatePalette(visualParameters?.palette);
+    if (l.pikoFull) {
+      // 全幅白底；藏左侧球体
+      if (this.sphereHost) this.sphereHost.style.display = "none";
+      this.drawCenterCanvas(l, visualParameters);
+    } else {
+      if (this.sphereHost) this.sphereHost.style.display = "";
+      // The membrane sphere renders itself into its own DOM canvas (own RAF loop).
+      // p5 only positions the host element over the left zone.
+      this._positionSphereHost(l.leftZone);
+      this._feedSphereAudio();
+      this._feedSphereShape();
+      if (this.leftField?.updatePalette) {
+        this.leftField.updatePalette(visualParameters?.palette);
+      }
+      this.drawCenterCanvas(l, visualParameters);
+      this.drawZoneHints(l);
     }
 
-    this.drawCenterCanvas(l, visualParameters);
-    this.drawZoneHints(l);
-
-    if (mouseIsPressed && this.isMouseInside()) {
+    if (mouseIsPressed && this.isMouseInside() && !this.isPointerOnUi()) {
       const inCenter = this._isInCenterZone(l, mouseX, mouseY);
       if (inCenter) {
         if (this.canvasTool === "erase") {
@@ -264,20 +315,21 @@ class CanvasInteraction {
 
     this.drawPlateInk(l);
 
-    this.drawVisualMaterials(visualParameters);
-    this.drawZoneLabels(l);
-  }
-
-  drawPaper() {
-    background(248, 247, 244);
-    noStroke();
-    fill(250, 249, 246);
-    rect(0, 0, width, height);
+    if (!l.pikoFull) {
+      this.drawVisualMaterials(visualParameters);
+      this.drawZoneLabels(l);
+    }
   }
 
   drawCenterCanvas(l, visualParameters) {
     const z = l.centerZone;
     noStroke();
+    if (l.pikoFull) {
+      // Figma：纯白全幅，无内边框
+      fill(255, 255, 255);
+      rect(0, 0, width, height);
+      return;
+    }
     fill(255, 255, 255, 235);
     rect(z.x + 6, z.y + 6, z.w - 12, z.h - 12, 6);
 
@@ -289,6 +341,17 @@ class CanvasInteraction {
       noFill();
       rect(z.x + 6, z.y + 6, z.w - 12, z.h - 12, 6);
     }
+  }
+
+  drawPaper() {
+    if (this.isPikoCanvasMode()) {
+      background(255, 255, 255);
+      return;
+    }
+    background(248, 247, 244);
+    noStroke();
+    fill(250, 249, 246);
+    rect(0, 0, width, height);
   }
 
   drawZoneHints(l) {

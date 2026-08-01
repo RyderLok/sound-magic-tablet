@@ -74,21 +74,21 @@ def health() -> Dict[str, Any]:
 
 @app.post("/analyze/wav")
 async def analyze_wav(file: UploadFile = File(...)) -> FullAnalysisResponse:
-    """Mode B — sound → waveform / spectrum / spectrogram → visual structure + brush."""
+    """Mode B — Qwen category → strokePattern; local acoustics → within-class brushParams."""
     data = await file.read()
     wav_path = config.OUTPUT_DIR / (file.filename or f"analyze_{int(time.time())}.wav")
     wav_path.write_bytes(data)
 
-    features, modifiers, brush, acoustic, export = analyze_wav_bytes(data)
-
     semantic = None
     semantic_error = None
+    category = None
     try:
         from siliconflow_omni import analyze_semantic
 
         raw_semantic, raw_error = analyze_semantic(data)
         if raw_semantic:
             semantic = SemanticAnalysis(**raw_semantic)
+            category = (semantic.archetype or "").strip() or None
             semantic_error = None
         else:
             semantic = None
@@ -102,6 +102,11 @@ async def analyze_wav(file: UploadFile = File(...)) -> FullAnalysisResponse:
             code="exception",
             message="声音识别失败，请重试",
         )
+
+    # Re-run mapping with Qwen category so strokePattern + category ranges apply.
+    features, modifiers, brush, acoustic, export = analyze_wav_bytes(
+        data, category=category
+    )
 
     return FullAnalysisResponse(
         features=AudioFeatures(**features),

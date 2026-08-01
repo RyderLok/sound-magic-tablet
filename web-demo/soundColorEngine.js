@@ -63,29 +63,38 @@ const SoundColorEngine = {
     };
   },
 
-  buildFromFeatures(features, archetypeId) {
+  /**
+   * Prefer Qwen category for hue family; use acousticFeatures ratios when present
+   * so within-class recordings keep distinct, vivid palettes.
+   */
+  buildFromFeatures(features, archetypeId, acousticFeatures) {
     const f = features || {};
+    const a = acousticFeatures || f.acousticFeatures || {};
     const seed = this.featureSeed(f);
-    const bass = this.clamp01(f.bass);
-    const mid = this.clamp01(f.mid);
-    const treble = this.clamp01(f.treble);
-    const pitch = this.clamp01(f.pitch);
-    const bright = this.clamp01(f.brightness);
-    const rough = this.clamp01(f.roughness);
-    const energy = this.clamp01(f.energy ?? f.volume);
+    const bass = this.clamp01(a.bassRatio ?? f.bass);
+    const mid = this.clamp01(a.midRatio ?? f.mid);
+    const treble = this.clamp01(a.trebleRatio ?? f.treble);
+    const pitch = this.clamp01(a.spectralCentroid ?? f.pitch ?? f.spectralCentroid);
+    const bright = this.clamp01(f.brightness ?? a.spectralCentroid ?? treble);
+    const rough = this.clamp01(a.roughness ?? f.roughness);
+    const energy = this.clamp01(a.rms ?? f.energy ?? f.volume);
+    const flux = this.clamp01(a.spectralFlux ?? f.spectralVariation);
     const profile = f.spectrumProfile || [];
 
     let hueCenter;
     if (archetypeId && this.archetypeHue[archetypeId] != null) {
       hueCenter = this.archetypeHue[archetypeId];
     } else {
-      hueCenter = (seed * 0.6180339887) % 360;
+      // No category: still avoid collapsing to a single warm band
+      hueCenter = (bass * 30 + mid * 160 + treble * 280 + (seed % 47)) % 360;
     }
 
-    const pitchShift = (pitch - 0.5) * 56;
-    const brightShift = (bright - 0.5) * 28;
-    const hueSpread = 36 + rough * 48 + energy * 32 + (seed % 24);
-    const count = 7;
+    // Within-class hue drift from acoustics (does not leave the family entirely)
+    const pitchShift = (pitch - 0.5) * 48;
+    const brightShift = (bright - 0.5) * 24;
+    const familySpread = archetypeId ? 52 : 72;
+    const hueSpread = familySpread + rough * 36 + flux * 28 + energy * 18 + (seed % 18);
+    const count = 8;
     const palette = [];
 
     for (let i = 0; i < count; i += 1) {
@@ -93,18 +102,22 @@ const SoundColorEngine = {
       const specLow = this.profileBand(profile, 0, 0.33);
       const specMid = this.profileBand(profile, 0.33, 0.66);
       const specHigh = this.profileBand(profile, 0.66, 1);
-      const specNudge = (specLow * (1 - t) + specMid * 0.5 + specHigh * t) * 72 - 36;
+      const bandMix = bass * (1 - t) + mid * 0.45 + treble * t;
+      const specNudge = (specLow * (1 - t) + specMid * 0.5 + specHigh * t) * 64 - 32;
+      const acousticNudge = (bandMix - 0.35) * 40;
 
-      let hue = hueCenter + pitchShift + brightShift + specNudge;
+      let hue = hueCenter + pitchShift + brightShift + specNudge + acousticNudge;
       hue += (t - 0.5) * hueSpread;
-      hue += (seed % 41) * t * 0.35;
-      if (archetypeId === "insects_amphibians" && i === count - 1) hue += 210;
-      if (archetypeId === "birds" && i === 0) hue -= 8;
+      hue += ((seed % 41) - 20) * t * 0.4;
+      if (archetypeId === "insects_amphibians" && i === count - 1) hue += 200;
+      if (archetypeId === "birds" && i === 0) hue -= 10;
+      if (archetypeId === "water" && i > count / 2) hue += 18;
+      if (archetypeId === "wind_leaves" && i < 2) hue -= 22; // teal lean for leaves
 
-      const sat = 52 + energy * 28 + mid * 22 + treble * 18 + (seed % 13);
-      const light = 34 + bright * 26 + treble * 22 * t + bass * 20 * (1 - t) + (i % 2) * 6;
+      const sat = 58 + energy * 22 + mid * 18 + treble * 20 + rough * 10 + (seed % 11);
+      const light = 38 + bright * 24 + treble * 20 * t + bass * 18 * (1 - t) + (i % 2) * 5;
 
-      palette.push(this.hslToRgb(hue, Math.min(92, sat), Math.min(72, light)));
+      palette.push(this.hslToRgb(hue, Math.min(94, sat), Math.min(74, Math.max(28, light))));
     }
     return palette;
   },

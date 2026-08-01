@@ -164,9 +164,8 @@ class AcousticAnalysisWindow {
     }
     el.classList.remove("hidden");
     const exp = analysisExport || {};
-    const archLocal = exp.naturalArchetype;
     const vs = exp.visualStructure;
-    const shape = exp.shapeProfile || window.activeAcousticViz?.shapeProfile || {};
+    const af = exp.acousticFeatures || {};
     const fmt = (v) => (v == null ? "—" : v);
     const pct = (v) => `${Math.round((v || 0) * 100)}%`;
     let semanticBlock = "";
@@ -174,30 +173,29 @@ class AcousticAnalysisWindow {
       const sources = (semantic.possibleSources || []).join("、") || "—";
       const events = (semantic.audibleEvents || []).join("、") || "—";
       const archZh = semantic.archetypeLabelZh || semantic.soundLabel || semantic.archetype || "—";
+      const pattern = exp.strokePattern || vs?.strokePattern || "";
       semanticBlock = `
-        <p class="acoustic-export-arch"><b>Qwen 五类识别</b>${archZh} · 置信 ${pct(semantic.confidence)}</p>
+        <p class="acoustic-export-arch"><b>Qwen 定类 → 笔刷算法</b>${archZh} → ${NaturalSoundArchetypes?.patternLabels?.[pattern]?.zh || pattern || "—"} · 置信 ${pct(semantic.confidence)}</p>
         <p class="acoustic-export-vs">${semantic.description || ""}</p>
         <p class="acoustic-export-vs"><b>可能声源</b>${sources} · <b>事件</b>${events}</p>`;
     } else if (semanticError) {
-      semanticBlock = `<p class="acoustic-export-arch acoustic-export-error"><b>语义识别</b>声音识别失败，请重试</p>`;
+      semanticBlock = `<p class="acoustic-export-arch acoustic-export-error"><b>语义识别</b>声音识别失败，请重试（无类别则无法选定笔刷算法）</p>`;
     }
     el.innerHTML = `
-      <p class="acoustic-export-title">声音 → 视觉结构 · 特征导出</p>
+      <p class="acoustic-export-title">声音 → 视觉结构 · Qwen 定类 · 本地声学调参</p>
       ${semanticBlock}
-      ${archLocal ? `<p class="acoustic-export-arch"><b>本地五类（笔刷结构）</b>${archLocal.labelZh || archLocal.id} · 置信 ${pct(archLocal.confidence)}${archLocal.ambiguous ? " · 分差接近（参数轻融合）" : ""}${archLocal.margin != null ? ` · margin ${Number(archLocal.margin).toFixed(3)}` : ""}</p>` : ""}
-      ${archLocal?.scores ? `<p class="acoustic-export-vs"><b>各类得分</b>${Object.entries(archLocal.scores).map(([k, v]) => `${k} ${Number(v).toFixed(2)}`).join(" · ")}</p>` : ""}
-      ${vs ? `<p class="acoustic-export-vs"><b>视觉笔刷</b>${NaturalSoundArchetypes?.patternLabels?.[vs.strokePattern]?.zh || vs.strokePattern} · ${vs.motionModel} · ${vs.texturePattern}${vs.blendWeight ? ` · blend ${Math.round(vs.blendWeight * 100)}%→${vs.secondaryArchetypeId || ""}` : ""}</p>` : ""}
+      ${vs ? `<p class="acoustic-export-vs"><b>视觉笔刷</b>${NaturalSoundArchetypes?.patternLabels?.[vs.strokePattern]?.zh || vs.strokePattern} · ${vs.motionModel || ""} · source ${vs.source || "qwen"}</p>` : ""}
       <div class="acoustic-export-grid">
         <div class="acoustic-export-item"><b>时长</b>${fmt(exp.duration)}s · ${fmt(exp.sampleRate)} Hz</div>
-        <div class="acoustic-export-item"><b>基音</b>${fmt(exp.pitchHz)} Hz</div>
-        <div class="acoustic-export-item"><b>节奏</b>${fmt(exp.tempoBpm)} BPM</div>
-        <div class="acoustic-export-item"><b>低频</b>${pct(exp.bandEnergy?.bass ?? features?.bass)}</div>
-        <div class="acoustic-export-item"><b>中频</b>${pct(exp.bandEnergy?.mid ?? features?.mid)}</div>
-        <div class="acoustic-export-item"><b>高频</b>${pct(exp.bandEnergy?.treble ?? features?.treble)}</div>
-        <div class="acoustic-export-item"><b>Shape</b>P ${pct(shape.plume)} · Rb ${pct(shape.ribbon)} · Rg ${pct(shape.ring)}</div>
-        <div class="acoustic-export-item"><b>Morph</b>B ${pct(shape.burst)} · C ${pct(shape.cluster)}</div>
-        <div class="acoustic-export-item"><b>Brush 密度</b>${pct(brushParams?.density ?? brushParams?.particleDensity)}</div>
-        <div class="acoustic-export-item"><b>Brush 湍流</b>${pct(brushParams?.turbulence)}</div>
+        <div class="acoustic-export-item"><b>RMS / Peak</b>${pct(af.rms)} / ${pct(af.peak)}</div>
+        <div class="acoustic-export-item"><b>Centroid</b>${pct(af.spectralCentroid)}</div>
+        <div class="acoustic-export-item"><b>B/M/T</b>${pct(af.bassRatio)} / ${pct(af.midRatio)} / ${pct(af.trebleRatio)}</div>
+        <div class="acoustic-export-item"><b>粗糙 / Flux</b>${pct(af.roughness)} / ${pct(af.spectralFlux)}</div>
+        <div class="acoustic-export-item"><b>节奏</b>tempo ${pct(af.tempo)} · onset ${pct(af.onsetDensity)}</div>
+        <div class="acoustic-export-item"><b>连续</b>${pct(af.continuity)} · 静音 ${pct(af.silenceRatio)}</div>
+        <div class="acoustic-export-item"><b>Brush 尺寸</b>${pct(brushParams?.brushSize ?? brushParams?.strokeWidth)}</div>
+        <div class="acoustic-export-item"><b>密度 / 湍流</b>${pct(brushParams?.density)} / ${pct(brushParams?.turbulence)}</div>
+        <div class="acoustic-export-item"><b>震动</b>A ${pct(brushParams?.vibrationAmplitude)} · F ${pct(brushParams?.vibrationFrequency)}</div>
       </div>`;
   }
 
@@ -251,13 +249,42 @@ class AcousticAnalysisWindow {
       visualParams = BrushSchema.applyToVisualParams(visualParams, brush);
     }
 
+    // Qwen category owns strokePattern + palette family.
+    const qwenCat = pyData.semantic?.archetype || pyData.analysisExport?.category;
+    const pattern =
+      pyData.analysisExport?.strokePattern
+      || pyData.analysisExport?.visualStructure?.strokePattern
+      || (qwenCat && NaturalSoundArchetypes?.patternFor?.(qwenCat));
+    if (pattern) {
+      visualParams.strokePattern = pattern;
+      visualParams.archetypeId = qwenCat || visualParams.archetypeId;
+    }
     window.activeVisualParams = visualParams;
+
     if (typeof NaturalSoundArchetypes !== "undefined") {
       NaturalSoundArchetypes.applyFromFeatures({ ...pyData, features });
       visualParams =
         window.activeFusedVisualParams ||
         window.activeVisualParams ||
         visualParams;
+      if (brush) window.activeBrushParams = brush;
+      if (pattern) visualParams.strokePattern = pattern;
+      if (qwenCat) visualParams.archetypeId = qwenCat;
+    }
+
+    // Force vivid category palette last (fixes warm-mud from null-archetype mapping).
+    if (typeof SoundColorEngine !== "undefined" && qwenCat) {
+      const af = pyData.analysisExport?.acousticFeatures || null;
+      const richPalette = SoundColorEngine.buildFromFeatures(features, qwenCat, af);
+      if (richPalette?.length) {
+        visualParams.palette = richPalette;
+        if (window.brushGenerator?.resetInkColor) {
+          window.brushGenerator.resetInkColor(richPalette[0]);
+        }
+        if (window.App?.canvasInteraction?.leftField?.updatePalette) {
+          window.App.canvasInteraction.leftField.updatePalette(richPalette);
+        }
+      }
     }
 
     window.activeVisualParams = visualParams;
@@ -265,7 +292,14 @@ class AcousticAnalysisWindow {
     window.activeAudioFeatures = features;
     window.activeAcousticViz = pyData?.acoustic || null;
     window.activeShapeProfile = pyData?.acoustic?.shapeProfile || null;
-    window.activeNaturalArchetype = pyData?.analysisExport?.naturalArchetype || null;
+    window.activeAcousticFeatures = pyData.analysisExport?.acousticFeatures || null;
+    window.activeNaturalArchetype = qwenCat
+      ? {
+          id: qwenCat,
+          labelZh: NaturalSoundArchetypes?.labels?.[qwenCat]?.zh || qwenCat,
+          source: "qwen"
+        }
+      : null;
     window.activeShapeProfileVersion = `${sampleId || "sample"}-${Date.now()}`;
     window.logSoundFingerprint?.(this.sampleFileName || "recording", features, window.activeAcousticViz);
 

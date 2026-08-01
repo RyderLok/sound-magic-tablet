@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import math
 import hashlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple  # noqa: F401 — Optional used by analyze_wav_bytes
 
 import numpy as np
 
+from acoustic_features import acoustic_to_legacy_features, extract_acoustic_features
 from analysis_export import build_mode_b_export
+from brush_mapper import build_unified_brush_package
 from feature_normalizer import clamp01, normalize_features
 from visual_mapper import features_to_modifiers, modifiers_to_brush
 
@@ -258,10 +260,13 @@ def analyze_pcm_frame(samples: List[int], sample_rate: int = 16000) -> Dict[str,
     })
 
 
-def analyze_wav_bytes(data: bytes, sample_rate_hint: int = 16000) -> Tuple[
-    Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]
-]:
-    """Mode B: features, modifiers, brush, acoustic viz, analysisExport."""
+def analyze_wav_bytes(
+    data: bytes,
+    sample_rate_hint: int = 16000,
+    *,
+    category: Optional[str] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """Mode B: acoustic features → brush; category (from Qwen) sets strokePattern."""
     y: np.ndarray
     sr = sample_rate_hint
 
@@ -273,37 +278,39 @@ def analyze_wav_bytes(data: bytes, sample_rate_hint: int = 16000) -> Tuple[
         if y.ndim > 1:
             y = np.mean(y, axis=1)
     else:
-        # Minimal WAV parser (PCM16 mono)
         y, sr = _decode_wav_pcm16_mono(data, sample_rate_hint)
 
-    if len(y) < 64:
-        feats = normalize_features({})
-        mods = features_to_modifiers(feats)
-        ac = _acoustic_from_array(y, sr)
-        return feats, mods, modifiers_to_brush(mods, feats), ac, build_mode_b_export(y, sr, feats, ac)
-
-    if HAS_LIBROSA:
-        feats = _analyze_with_librosa(y, sr)
-    else:
-        # Chunk and average frame features
-        frame = max(512, min(2048, len(y) // 4))
-        chunks = [y[i : i + frame] for i in range(0, len(y) - frame, frame)]
-        if not chunks:
-            chunks = [y]
-        acc = normalize_features({})
-        for ch in chunks[:40]:
-            ints = (np.clip(ch, -1, 1) * 32767).astype(np.int16).tolist()
-            f = analyze_pcm_frame(ints, sr)
-            for k in acc:
-                if k == "spectrumProfile":
-                    continue
-                acc[k] = clamp01(acc[k] * 0.7 + f[k] * 0.3)
-        feats = normalize_features(acc)
-
-    mods = features_to_modifiers(feats)
-    brush = modifiers_to_brush(mods, feats)
     acoustic = _acoustic_from_array(y, sr)
-    export = build_mode_b_export(y, sr, feats, acoustic)
+    acoustic_feats = extract_acoustic_features(y, sr)
+    package = build_unified_brush_package(category, acoustic_feats)
+    brush = package["brushParams"]
+    mods = package["visualModifiers"]
+    # Prefer acoustic-derived legacy features; keep spectrum profile from librosa path when available
+    feats = acoustic_to_legacy_features(acoustic_feats)
+    if HAS_LIBROSA and len(y) >= 256:
+        legacy = _analyze_with_librosa(y, sr)
+        feats["spectrumProfile"] = legacy.get("spectrumProfile") or []
+        # Keep brightness/pitch nuance from librosa without re-classifying
+        feats["brightness"] = legacy.get("brightness", feats["brightness"])
+        feats["pitch"] = legacy.get("pitch", feats["pitch"])
+
+    export = build_mode_b_export(
+        y,
+        sr,
+        feats,
+        acoustic,
+        acoustic_features=acoustic_feats,
+        category=package.get("category"),
+        stroke_pattern=package.get("strokePattern"),
+        visual_structure=package.get("visualStructure"),
+        brush_params=brush,
+    )
+    export["unifiedBrush"] = {
+        "category": package.get("category"),
+        "strokePattern": package.get("strokePattern"),
+        "acousticFeatures": package.get("acousticFeatures"),
+        "brushParams": brush,
+    }
     return feats, mods, brush, acoustic, export
 
 

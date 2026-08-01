@@ -4,14 +4,147 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Piko</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=piko17" />
 </head>
 <body>
+
+<!-- Piko 舞台：固定 1055×834（Figma 设计基准），按窗口等比缩放 -->
+<div id="pikoStage">
+
+  <!-- ================================================================
+       P1 · SPLASH — 橙底品牌启动页，1.5s 后自动进入 Collect
+  ================================================================ -->
+  <div id="splashView" class="view piko-screen piko-splash">
+    <img class="splash-logo" src="piko-assets/logo-piko.svg" alt="Piko" />
+    <span class="splash-spark splash-spark-1" aria-hidden="true"></span>
+    <span class="splash-spark splash-spark-2" aria-hidden="true"></span>
+    <span class="splash-spark splash-spark-3" aria-hidden="true"></span>
+    <p class="splash-slogan">Catch a sound. Make a world.</p>
+  </div>
+
+  <!-- ================================================================
+       P2 · COLLECT — 三磁贴入口（Draw / Input / My Gallery）
+  ================================================================ -->
+  <div id="collectView" class="view piko-screen piko-collect hidden">
+    <h1 class="piko-title">Collect</h1>
+    <p class="collect-lead">Insert the recorder into the drawing board to transfer your sound</p>
+
+    <div class="collect-tiles" id="collectTiles" aria-label="Collect carousel">
+      <button type="button" class="collect-tile is-slot-left" data-piko-go="draw" data-badge="3">
+        <span class="tile-badge">3</span>
+        <span class="tile-icon-wrap">
+          <img class="tile-icon-ring" src="piko-assets/tile-circle-side.svg" alt="" aria-hidden="true" />
+          <img class="tile-icon-glyph" src="piko-assets/icon-draw.svg" alt="" aria-hidden="true" />
+        </span>
+        <span class="tile-label">Draw</span>
+      </button>
+
+      <button type="button" class="collect-tile is-slot-center" data-piko-go="input" data-badge="1">
+        <span class="tile-badge">1</span>
+        <span class="tile-icon-wrap">
+          <img class="tile-icon-ring" src="piko-assets/tile-circle-ring.svg" alt="" aria-hidden="true" />
+          <img class="tile-icon-glyph" src="piko-assets/icon-input.svg" alt="" aria-hidden="true" />
+        </span>
+        <span class="tile-label">Input</span>
+      </button>
+
+      <button type="button" class="collect-tile is-slot-right" data-piko-go="gallery" data-badge="2">
+        <span class="tile-badge">2</span>
+        <span class="tile-icon-wrap">
+          <img class="tile-icon-ring" src="piko-assets/tile-circle-side.svg" alt="" aria-hidden="true" />
+          <img class="tile-icon-glyph" src="piko-assets/icon-gallery.svg" alt="" aria-hidden="true" />
+        </span>
+        <span class="tile-label">My Gallery</span>
+      </button>
+    </div>
+
+    <p id="collectStatus" class="collect-status">Waiting for recorder<span class="collect-status-dots">...</span></p>
+  </div>
+
+  <!-- ================================================================
+       P3 · MY SOUNDS — 录音卡片，勾选 1–5 段做笔刷
+  ================================================================ -->
+  <div id="soundsView" class="view piko-screen piko-sounds hidden">
+    <h1 class="piko-title">My sounds</h1>
+    <p class="sounds-lead">Pick 1–5 sounds to turn into brushes.</p>
+
+    <button type="button" id="soundsRecordBtn" class="piko-round-btn sounds-record-btn" title="返回 Collect">
+      <img src="piko-assets/icon-waveform.svg" alt="返回 Collect" />
+    </button>
+
+    <div id="soundsTrack" class="sounds-track"></div>
+
+    <p id="soundsCount" class="sounds-count">0 selected</p>
+    <button type="button" id="soundsNextBtn" class="piko-cta sounds-next-btn" disabled>Next Step</button>
+  </div>
+
+  <!-- ================================================================
+       P4 · TRANSFORM — 声音变笔刷的加载屏
+  ================================================================ -->
+  <div id="magicView" class="view piko-screen piko-magic hidden">
+    <button type="button" id="magicBackBtn" class="piko-round-btn piko-back-btn" title="返回">
+      <img src="piko-assets/icon-chevron-left.svg" alt="返回" />
+    </button>
+
+    <h1 class="piko-title">Transform</h1>
+    <p class="magic-lead">A little sound magic is happening...</p>
+
+    <div class="magic-orb-wrap">
+      <img class="magic-orb-glow" src="piko-assets/orb-glow.svg" alt="" aria-hidden="true" />
+      <img class="magic-orb" src="piko-assets/orb.png" alt="" aria-hidden="true" />
+    </div>
+
+    <div class="magic-pill">
+      <img class="magic-pill-star" src="piko-assets/icon-star.svg" alt="" aria-hidden="true" />
+      <span id="magicPillText">Brush Blooming</span>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       P5 · SOUND BRUSH — 笔刷列表 + 预览 + Use Brush
+  ================================================================ -->
+  <div id="brushView" class="view piko-screen piko-brush hidden">
+    <button type="button" id="brushBackBtn" class="piko-round-btn piko-back-btn" title="返回">
+      <img src="piko-assets/icon-chevron-left.svg" alt="返回" />
+    </button>
+
+    <h1 class="piko-title piko-title-brush">Sound Brush</h1>
+    <p class="brush-col-title brush-col-left">Your Sound Brushes</p>
+    <p class="brush-col-title brush-col-right">Made From a Sound</p>
+
+    <div id="brushList" class="brush-list"></div>
+
+    <div class="brush-info-bar">
+      <span id="brushInfoName" class="brush-info-name">—</span>
+      <canvas id="brushInfoWave" class="brush-info-wave" width="137" height="30"></canvas>
+      <span id="brushInfoDur" class="brush-info-dur">00:00</span>
+    </div>
+
+    <div id="brushPreview" class="brush-preview-panel" aria-label="Brush preview"></div>
+
+    <button type="button" id="brushUseBtn" class="piko-cta brush-use-btn">Use Brush</button>
+    <p id="brushPaletteCount" class="brush-palette-count">Add to palette: 0/5</p>
+  </div>
+
+  <!-- ================================================================
+       P7 · MY GALLERY — 作品图库占位（保存/打印功能后续接入）
+  ================================================================ -->
+  <div id="galleryView" class="view piko-screen piko-gallery hidden">
+    <button type="button" id="galleryBackBtn" class="piko-round-btn piko-back-btn" title="返回">
+      <img src="piko-assets/icon-chevron-left.svg" alt="返回" />
+    </button>
+    <button type="button" id="galleryMenuBtn" class="piko-round-btn piko-gallery-menu-btn" title="菜单" aria-label="菜单">
+      <img src="piko-assets/icon-checklist.svg" alt="" aria-hidden="true" />
+    </button>
+
+    <h1 class="piko-title">My Gallery</h1>
+    <div id="galleryGrid" class="gallery-grid"></div>
+  </div>
 
   <!-- ================================================================
        LIBRARY VIEW — default page
   ================================================================ -->
-  <div id="libraryView" class="view">
+  <div id="libraryView" class="view hidden">
 
     <header class="lib-header">
       <div class="lib-header-left">
@@ -182,6 +315,20 @@
   ================================================================ -->
   <div id="analysisView" class="view hidden">
 
+    <!-- Piko Canvas 顶栏（Figma 1:298）—— plate 模式下显示 -->
+    <div id="pikoCanvasChrome" class="piko-canvas-chrome hidden">
+      <button type="button" id="pikoCanvasBackBtn" class="piko-round-btn piko-back-btn" title="返回">
+        <img src="piko-assets/icon-chevron-left.svg" alt="返回" />
+      </button>
+      <button type="button" id="pikoCanvasEraseBtn" class="piko-round-btn piko-erase-btn" title="橡皮">
+        <img src="piko-assets/icon-eraser.svg" alt="橡皮" />
+      </button>
+      <div id="pikoPalettePill" class="piko-palette-pill" role="listbox" aria-label="Brush palette"></div>
+      <button type="button" id="pikoCanvasSaveBtn" class="piko-round-btn piko-save-btn" title="保存（图库占位）">
+        <img src="piko-assets/icon-save.svg" alt="保存" />
+      </button>
+    </div>
+
     <header class="analysis-header">
       <button id="backBtn" class="back-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -301,7 +448,10 @@
   </div>
 
 
+</div><!-- /pikoStage -->
+
   <!-- Scripts — load order matters -->
+  <script src="pikoStage.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
@@ -331,8 +481,15 @@
   <script src="sampleAnalyzer.js"></script>
   <script src="soundTransformView.js"></script>
   <script src="brushGenerator.js"></script>
-  <script src="canvasInteraction.js"></script>
+  <script src="canvasInteraction.js?v=piko2"></script>
   <script src="app.js?v=3"></script>
   <script src="sketch.js"></script>
+  <!-- Piko 新界面：屏幕脚本 + 路由（路由放最后，接管初始显示哪一屏） -->
+  <script src="pikoSoundsScreen.js"></script>
+  <script src="pikoMagicScreen.js"></script>
+  <script src="pikoBrushScreen.js"></script>
+  <script src="pikoCanvasScreen.js"></script>
+  <script src="pikoCollectCarousel.js?v=12"></script>
+  <script src="pikoRouter.js?v=3"></script>
 </body>
 </html>

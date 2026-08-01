@@ -1,10 +1,39 @@
 :root {
-  --ink: #17202a;
-  --muted: #64707d;
-  --panel: #ffffff;
-  --line: #d9e0e6;
-  --paper: #eeedea;
-  --accent: #3a3a3e;
+  /* --- Piko design tokens · 见 design.md 第 3 节 --- */
+  --piko-orange: #f16e1c;
+  --piko-orange-deep: #d95f13;
+  --piko-orange-soft: #fdf0e6;
+  --piko-yellow: #fdbf42;
+  --piko-cream: #f9f8f4;
+  --piko-white: #ffffff;
+  --piko-text: #535353;
+  --piko-muted: #cacaca;
+  --piko-muted-2: #9a9a9a;
+
+  --piko-shadow: 0 4px 4px rgba(0, 0, 0, 0.25);
+  --piko-shadow-soft: 0 2px 8px rgba(241, 110, 28, 0.12);
+  --piko-inset: inset 0 0 4px rgba(0, 0, 0, 0.25);
+  --piko-border-sel: 2px solid #f16e1c;
+
+  --piko-radius-card: 20px;
+  --piko-radius-sound: 30px;
+  --piko-radius-cta: 40px;
+  --piko-radius-pill: 60px;
+
+  --piko-font: "Alimama FangYuanTi VF", "PingFang SC", system-ui, -apple-system, sans-serif;
+
+  /* Figma 设计基准画布 */
+  --piko-screen-w: 1055px;
+  --piko-screen-h: 834px;
+  --piko-gutter: 30px;
+
+  /* --- 旧变量重映射到 Piko，保证存量样式同步换肤 --- */
+  --ink: var(--piko-text);
+  --muted: var(--piko-muted-2);
+  --panel: var(--piko-white);
+  --line: #ecdfd4;
+  --paper: var(--piko-cream);
+  --accent: var(--piko-orange);
 }
 
 * { box-sizing: border-box; }
@@ -13,21 +42,37 @@ html, body { height: 100%; }
 
 body {
   margin: 0;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
   color: var(--ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background:
-    linear-gradient(135deg, rgba(120, 120, 124, 0.10), transparent 34%),
-    linear-gradient(45deg, rgba(80, 80, 84, 0.07), transparent 32%),
-    var(--paper);
+  font-family: var(--piko-font);
+  /* 舞台外的信箱区 */
+  background: #e9e4de;
+}
+
+/* ============================================================
+   PIKO STAGE — 固定 1055×834 设计基准，等比缩放贴合窗口
+============================================================ */
+
+#pikoStage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--piko-screen-w);
+  height: var(--piko-screen-h);
+  transform: translate(-50%, -50%) scale(var(--piko-scale, 1));
+  transform-origin: center center;
+  overflow: hidden;
+  background: var(--piko-white);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
 }
 
 h1, h2, h3, h4, h5, p { margin: 0; }
 
 button {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.55rem 0.85rem;
+  border-radius: 999px;
+  padding: 0.55rem 1.1rem;
   color: var(--ink);
   background: #fff;
   font: inherit;
@@ -36,7 +81,1059 @@ button {
   transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
 
-.view { width: 100%; min-height: 100vh; }
+/* 每屏铺满舞台；过渡期旧内容超高时在舞台内部滚动 */
+.view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Figma 还原屏：绝对定位坐标系，不滚动 */
+.piko-screen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.piko-screen.hidden { display: none !important; }
+
+/* 展示型文字不参与框选，避免拖动时出现蓝色高亮；输入类元素例外 */
+.piko-screen,
+.piko-screen * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.piko-screen input,
+.piko-screen textarea,
+.piko-screen [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ============================================================
+   屏幕转场 · 前进从右侧推入，后退从左侧退回，splash 用纯淡入
+   离场屏在动画期间不加 .hidden，结束后由 pikoRouter 收尾
+============================================================ */
+
+/* 离场屏脱离文档流，避免和入场屏在流内互相顶开 */
+.view.piko-leaving {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.view.piko-entering { z-index: 2; }
+
+.view.piko-enter-fwd  { animation: piko-in-fwd 340ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+.view.piko-leave-fwd  { animation: piko-out-fwd 280ms cubic-bezier(0.4, 0, 0.7, 0.4) both; }
+.view.piko-enter-back { animation: piko-in-back 340ms cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+.view.piko-leave-back { animation: piko-out-back 280ms cubic-bezier(0.4, 0, 0.7, 0.4) both; }
+.view.piko-enter-fade { animation: piko-in-fade 380ms ease both; }
+.view.piko-leave-fade { animation: piko-out-fade 300ms ease both; }
+
+@keyframes piko-in-fwd {
+  from { opacity: 0; transform: translateX(40px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes piko-out-fwd {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(-28px) scale(0.985); }
+}
+
+@keyframes piko-in-back {
+  from { opacity: 0; transform: translateX(-40px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes piko-out-back {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(28px) scale(0.985); }
+}
+
+@keyframes piko-in-fade {
+  from { opacity: 0; transform: scale(1.015); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes piko-out-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view.piko-enter-fwd,
+  .view.piko-leave-fwd,
+  .view.piko-enter-back,
+  .view.piko-leave-back,
+  .view.piko-enter-fade,
+  .view.piko-leave-fade {
+    animation-duration: 1ms;
+  }
+}
+
+/* 页标题 · design.md 4.1 —— 36px Bold 橙，top:53 */
+.piko-title {
+  position: absolute;
+  top: 53px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  color: var(--piko-orange);
+  font-size: 36px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0;
+}
+
+/* ============================================================
+   P1 · SPLASH  (Figma 1:3)
+============================================================ */
+
+.piko-splash { background: var(--piko-orange); }
+
+/* Logo 字标 · Figma (371,349) 312×135.33 */
+.splash-logo {
+  position: absolute;
+  left: 371px;
+  top: 349px;
+  width: 312px;
+  height: 135.33px;
+}
+
+/* 三道黄火花 · 统一 40×14 圆角 60 */
+.splash-spark {
+  position: absolute;
+  width: 40px;
+  height: 14px;
+  border-radius: 60px;
+  background: var(--piko-yellow);
+}
+
+.splash-spark-1 {
+  left: 660px;
+  top: 366px;
+  transform: rotate(-55.25deg);
+}
+
+.splash-spark-2 {
+  left: 680.3px;
+  top: 387px;
+  transform: rotate(-33.73deg);
+}
+
+.splash-spark-3 {
+  left: 691px;
+  top: 417px;
+}
+
+/* Slogan · 居中 top:498，20px */
+.splash-slogan {
+  position: absolute;
+  top: 498px;
+  left: 527px;
+  transform: translateX(-50%);
+  margin: 0;
+  color: var(--piko-cream);
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   P2 · COLLECT  (Figma 1:14)
+============================================================ */
+
+.piko-collect { background: var(--piko-white); }
+
+/* 主说明 · 居中 top:131，32px */
+.collect-lead {
+  position: absolute;
+  top: 131px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  width: 637px;
+  color: var(--piko-text);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+}
+
+/* 三磁贴环形轮播 · Coverflow
+   基准：中心 350×350 @x527，侧卡 312×312 @x139 / x915（Figma 红线）
+   侧卡尺寸差用 scale(0.891) 表达，内部元素比例与红线一致，位移由 JS 逐帧写 transform。 */
+.collect-tiles {
+  position: absolute;
+  top: 242px;
+  left: 0;
+  width: 100%;
+  height: 350px;
+  perspective: 1400px;
+  perspective-origin: 50% 45%;
+  transform-style: preserve-3d;
+  touch-action: pan-y;
+  cursor: grab;
+  user-select: none;
+}
+
+.collect-tiles.is-dragging { cursor: grabbing; }
+
+.collect-tile {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 350px;
+  height: 350px;
+  margin: 0 0 0 -175px;
+  padding: 0;
+  border: none;
+  border-radius: 100px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+  cursor: pointer;
+  transform-origin: 50% 50%;
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+  transition: filter 160ms ease;
+}
+
+.collect-tile:hover { filter: brightness(1.04); }
+
+/* 序号角标：白圈 + 橙数字 */
+.tile-badge {
+  position: absolute;
+  left: 45px;
+  top: 47px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--piko-white);
+  color: var(--piko-orange);
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* 图标：黄环白底圆 + 内部线性图标 */
+.tile-icon-wrap {
+  position: absolute;
+  left: 50%;
+  top: 84px;
+  width: 182px;
+  height: 182px;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+}
+
+.tile-icon-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tile-icon-glyph {
+  position: relative;
+  display: block;
+  object-fit: contain;
+}
+
+.collect-tile[data-piko-go="input"] .tile-icon-glyph { width: 97px; height: 89px; }
+.collect-tile[data-piko-go="draw"] .tile-icon-glyph { width: 88px; height: 81px; }
+.collect-tile[data-piko-go="gallery"] .tile-icon-glyph { width: 76px; height: 80px; }
+
+/* 磁贴标签 */
+.tile-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 272px;
+  color: var(--piko-white);
+  font-weight: 700;
+  font-size: 24px;
+  text-align: center;
+}
+
+
+/* 底部状态 · 居中 top:610 */
+.collect-status {
+  position: absolute;
+  top: 610px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: 24px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.collect-status-dots {
+  display: inline-block;
+  min-width: 1.6em;
+  text-align: left;
+}
+
+.collect-status.is-ready { color: var(--piko-orange); }
+
+/* ============================================================
+   通用 Piko 控件（Figma design.md 4.2 / 4.3）
+============================================================ */
+
+/* 圆形导航钮 */
+.piko-round-btn {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 140ms ease;
+}
+
+.piko-round-btn img { display: block; }
+.piko-round-btn:hover { transform: scale(1.05); }
+.piko-round-btn:active { transform: scale(0.96); }
+
+/* 橙底白图标的圆钮（Figma 常用形态） */
+.piko-round-btn.is-filled {
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+/* 实心主按钮 · 圆角 40，白字 24 */
+.piko-cta {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--piko-radius-cta);
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+  color: var(--piko-white);
+  font-family: inherit;
+  font-size: 24px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 140ms ease, transform 140ms ease;
+}
+
+.piko-cta:hover:not(:disabled) { filter: brightness(1.05); }
+.piko-cta:active:not(:disabled) { transform: translateY(1px); }
+
+.piko-cta:disabled {
+  background: var(--piko-muted);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   P3 · MY SOUNDS  (Figma 1:49)
+============================================================ */
+
+.piko-sounds { background: var(--piko-white); }
+
+/* 指引 · (30,165) 32px */
+.sounds-lead {
+  position: absolute;
+  left: 30px;
+  top: 165px;
+  margin: 0;
+  color: var(--piko-text);
+  font-size: 32px;
+  font-weight: 600;
+}
+
+/* 右上圆钮 · (979,60) Ø56，内含 29.85×27.52 波形图标 */
+.sounds-record-btn {
+  left: 979px;
+  top: 60px;
+  width: 56px;
+  height: 56px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+.sounds-record-btn img {
+  width: 29.85px;
+  height: 27.52px;
+}
+
+/* 卡片轨道 · 首卡 (30,227)，卡 219×379，间距 59 */
+.sounds-track {
+  position: absolute;
+  left: 0;
+  top: 227px;
+  width: 100%;
+  height: 379px;
+  padding: 0 30px;
+  display: flex;
+  gap: 59px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.sounds-track::-webkit-scrollbar { display: none; }
+
+/* 空态 */
+.sounds-empty {
+  margin: 0;
+  align-self: center;
+  color: var(--piko-muted);
+  font-size: 24px;
+  font-weight: 600;
+}
+
+/* 声卡 · 219×379 圆角 30 cream */
+.sound-card {
+  position: relative;
+  flex: 0 0 219px;
+  width: 219px;
+  height: 379px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--piko-radius-sound);
+  background: var(--piko-cream);
+  box-shadow: var(--piko-shadow);
+  cursor: pointer;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.sound-card:hover { transform: translateY(-2px); }
+.sound-card.is-selected { border-color: var(--piko-orange); }
+
+.sound-card.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 选中圈 · 卡内 (12,18) Ø30 */
+.sound-check {
+  position: absolute;
+  left: 12px;
+  top: 18px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--piko-muted);
+  border-radius: 50%;
+  background: var(--piko-white);
+  color: transparent;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sound-card.is-selected .sound-check {
+  border-color: var(--piko-orange);
+  background: var(--piko-orange);
+  color: var(--piko-white);
+}
+
+/* 视觉预览区（卡上半部） */
+.sound-preview {
+  position: absolute;
+  left: 12px;
+  top: 62px;
+  width: 195px;
+  height: 140px;
+  border-radius: 18px;
+  background: var(--piko-white);
+  overflow: hidden;
+}
+
+.sound-preview canvas { display: block; width: 100%; height: 100%; }
+
+/* 名称 · 居中 卡内 y=214（绝对 441） */
+.sound-name {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 214px;
+  margin: 0;
+  color: var(--piko-text);
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 波形槽 · 卡内 (12,249) 197×54 圆角 20 白底 + inset */
+.sound-wave-slot {
+  position: absolute;
+  left: 12px;
+  top: 249px;
+  width: 195px;
+  height: 54px;
+  border-radius: var(--piko-radius-card);
+  background: var(--piko-white);
+  box-shadow: var(--piko-inset);
+  overflow: hidden;
+}
+
+.sound-wave-slot canvas { display: block; width: 100%; height: 100%; }
+
+/* 播放钮 · 卡内 (12,321) Ø37.5 */
+.sound-play {
+  position: absolute;
+  left: 12px;
+  top: 321px;
+  width: 37.5px;
+  height: 37.5px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sound-play img { display: block; width: 100%; height: 100%; }
+.sound-play:hover { transform: scale(1.06); }
+
+/* 时长 · 居中 卡内 y=331 */
+.sound-dur {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 331px;
+  margin: 0;
+  color: var(--piko-orange);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* 计数 · (30,699) 24px */
+.sounds-count {
+  position: absolute;
+  left: 30px;
+  top: 699px;
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.sounds-count.has-selection { color: var(--piko-orange); }
+
+/* Next Step · (754,684) 281×67 */
+.sounds-next-btn {
+  left: 754px;
+  top: 684px;
+  width: 281px;
+  height: 67px;
+}
+
+/* 左上返回圆钮 · (31,60) Ø61 —— 各屏通用 */
+.piko-back-btn {
+  left: 31px;
+  top: 60px;
+  width: 61px;
+  height: 61px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+.piko-back-btn img { width: 16px; height: 27px; }
+
+/* ============================================================
+   P4 · TRANSFORM  (Figma 1:288)
+============================================================ */
+
+.piko-magic { background: var(--piko-white); }
+
+/* 副文案 · 居中 top:148，36px，宽 482 */
+.magic-lead {
+  position: absolute;
+  top: 148px;
+  left: 536px;
+  transform: translateX(-50%);
+  margin: 0;
+  width: 482px;
+  color: var(--piko-text);
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+}
+
+/* 魔法球 · 光晕 (343,225) 369；球体 (394,265) 285×288 blur(2px) */
+.magic-orb-wrap {
+  position: absolute;
+  left: 343px;
+  top: 225px;
+  width: 369px;
+  height: 369px;
+}
+
+.magic-orb-glow {
+  position: absolute;
+  left: -70px;
+  top: -70px;
+  width: 509px;
+  height: 509px;
+  pointer-events: none;
+}
+
+.magic-orb {
+  position: absolute;
+  left: 51px;
+  top: 40px;
+  width: 285px;
+  height: 288px;
+  object-fit: cover;
+  object-position: bottom;
+  filter: blur(2px);
+  animation: magic-orb-float 4.5s ease-in-out infinite;
+}
+
+@keyframes magic-orb-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-10px) scale(1.03); }
+}
+
+/* 状态胶囊 · (385,594) 302×53 圆角 60 橙边 */
+.magic-pill {
+  position: absolute;
+  left: 385px;
+  top: 594px;
+  width: 302px;
+  height: 53px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: var(--piko-border-sel);
+  border-radius: var(--piko-radius-pill);
+  background: var(--piko-white);
+  color: var(--piko-orange);
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.magic-pill-star {
+  width: 20px;
+  height: 20px;
+  animation: magic-star-twinkle 1.8s ease-in-out infinite;
+}
+
+@keyframes magic-star-twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+/* ============================================================
+   P5 · SOUND BRUSH  (Figma 1:352)
+============================================================ */
+
+.piko-brush { background: var(--piko-white); }
+
+.piko-title-brush { top: 56px; }
+
+.brush-col-title {
+  position: absolute;
+  top: 151px;
+  margin: 0;
+  color: var(--piko-text);
+  font-size: 24px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.brush-col-left { left: 31px; }
+.brush-col-right { left: 417px; }
+
+/* 左栏笔刷列表 */
+.brush-list {
+  position: absolute;
+  left: 31px;
+  top: 195px;
+  width: 317px;
+  height: 516px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.brush-list::-webkit-scrollbar { display: none; }
+
+.brush-row {
+  position: relative;
+  flex: 0 0 102px;
+  width: 317px;
+  height: 102px;
+  padding: 0;
+  border: 2px solid var(--piko-orange);
+  border-radius: var(--piko-radius-card);
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+
+.brush-row.is-active {
+  background: var(--piko-cream);
+  box-shadow: var(--piko-shadow);
+}
+
+.brush-row-play {
+  position: absolute;
+  left: 24px;
+  top: 32px;
+  width: 37.5px;
+  height: 37.5px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.brush-row-play img { display: block; width: 100%; height: 100%; }
+
+.brush-row-name {
+  position: absolute;
+  left: 84px;
+  top: 32px;
+  margin: 0;
+  max-width: 140px;
+  color: var(--piko-text);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brush-row-dur {
+  position: absolute;
+  right: 31px;
+  top: 33px;
+  margin: 0;
+  color: var(--piko-text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.brush-row-wave {
+  position: absolute;
+  left: 84px;
+  top: 57px;
+  width: 137px;
+  height: 30px;
+}
+
+.brush-row-wave canvas { display: block; width: 100%; height: 100%; }
+
+.brush-list-empty {
+  margin: 24px 0 0;
+  color: var(--piko-muted);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* 右栏信息条 */
+.brush-info-bar {
+  position: absolute;
+  left: 417px;
+  top: 195px;
+  width: 596px;
+  height: 57px;
+  border: 2px solid var(--piko-orange);
+  border-radius: var(--piko-radius-card);
+  background: var(--piko-cream);
+  box-shadow: var(--piko-shadow);
+}
+
+.brush-info-name {
+  position: absolute;
+  left: 37px;
+  top: 20px;
+  color: var(--piko-orange);
+  font-size: 16px;
+  font-weight: 600;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brush-info-wave {
+  position: absolute;
+  left: 259px;
+  top: 17px;
+  width: 137px;
+  height: 30px;
+}
+
+.brush-info-dur {
+  position: absolute;
+  right: 36px;
+  top: 22px;
+  color: var(--piko-orange);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* 预览板（动效占位） */
+.brush-preview-panel {
+  position: absolute;
+  left: 417px;
+  top: 273px;
+  width: 596px;
+  height: 336px;
+  border-radius: var(--piko-radius-card);
+  background: var(--piko-cream);
+  overflow: hidden;
+}
+
+.brush-preview-panel canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Use Brush */
+.brush-use-btn {
+  left: 417px;
+  top: 644px;
+  width: 317px;
+  height: 67px;
+}
+
+.brush-palette-count {
+  position: absolute;
+  left: 774px;
+  top: 665px;
+  margin: 0;
+  color: var(--piko-muted-2);
+  font-size: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   P6 · CANVAS chrome  (Figma 1:298) — 套在既有 analysisView 上
+============================================================ */
+
+.piko-canvas-chrome {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 140px;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.piko-canvas-chrome > * { pointer-events: auto; }
+
+.piko-erase-btn {
+  left: 294px;
+  top: 60px;
+  width: 61px;
+  height: 61px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+.piko-erase-btn img { width: 28px; height: 26px; }
+
+.piko-erase-btn.is-active {
+  outline: 3px solid var(--piko-yellow);
+  outline-offset: 2px;
+}
+
+.piko-save-btn {
+  left: 962px;
+  top: 60px;
+  width: 61px;
+  height: 61px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+.piko-save-btn img { width: 27px; height: 27px; }
+
+/* 色盘 pill · (367,60) 456×61 */
+.piko-palette-pill {
+  position: absolute;
+  left: 367px;
+  top: 60px;
+  width: 456px;
+  height: 61px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px 0 16px;
+  border-radius: var(--piko-radius-pill);
+  background: var(--piko-cream);
+  box-shadow: var(--piko-shadow);
+}
+
+.piko-palette-slot {
+  flex: 0 0 58px;
+  width: 58px;
+  height: 39px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background: #ddd;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.piko-palette-slot.is-empty {
+  background: rgba(0, 0, 0, 0.06);
+  cursor: default;
+}
+
+.piko-palette-slot.is-active {
+  border-color: var(--piko-orange);
+  transform: translateY(-1px);
+}
+
+.piko-palette-more {
+  margin-left: auto;
+  color: var(--piko-muted-2);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  line-height: 1;
+  user-select: none;
+}
+
+/* plate 模式：藏旧顶栏/侧栏，画布铺满舞台 */
+#analysisView.piko-canvas-mode {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--piko-white);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#analysisView.piko-canvas-mode .piko-canvas-chrome { display: block; }
+
+#analysisView.piko-canvas-mode .analysis-header,
+#analysisView.piko-canvas-mode .interpretation-panel,
+#analysisView.piko-canvas-mode .vg-label,
+#analysisView.piko-canvas-mode #plateBrushStrip {
+  display: none !important;
+}
+
+#analysisView.piko-canvas-mode .analysis-shell {
+  display: block;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#analysisView.piko-canvas-mode .visual-generation-column {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+#analysisView.piko-canvas-mode .canvas-holder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: var(--piko-white);
+}
+
+/* Piko 画板模式下藏系统状态条 */
+#analysisView.piko-canvas-mode ~ #systemStatusBar,
+#pikoStage:has(#analysisView.piko-canvas-mode) #systemStatusBar {
+  display: none !important;
+}
+
+/* ============================================================
+   P7 · MY GALLERY  (Figma 1:629) — 占位
+============================================================ */
+
+.piko-gallery { background: var(--piko-white); }
+
+/* 右上圆钮 · Figma 1:637 圆 61×61 @ (962,60)，内 1:639 图标 27×27 */
+.piko-gallery-menu-btn {
+  left: 962px;
+  top: 60px;
+  width: 61px;
+  height: 61px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+.piko-gallery-menu-btn img {
+  width: 27px;
+  height: 27px;
+  display: block;
+}
+
+.gallery-grid {
+  position: absolute;
+  left: 30px;
+  top: 187px;
+  width: 995px;
+  height: 470px;
+  display: grid;
+  grid-template-columns: repeat(3, 305px);
+  grid-auto-rows: 216px;
+  gap: 29px 34px;
+  align-content: start;
+}
+
+.gallery-card {
+  width: 305px;
+  height: 216px;
+  border: none;
+  border-radius: var(--piko-radius-card);
+  background: var(--piko-cream);
+  box-shadow: var(--piko-shadow);
+}
+
+/* ============================================================
+   调试类 UI — 保留 DOM（后端/数据仍在用），前端不展示
+============================================================ */
+
+#debugPanel,
+#acousticAnalysisModal {
+  display: none !important;
+}
+
+/* 状态胶囊条不在 Figma 设计内：仅旧页面保留，新屏隐藏 */
+#pikoStage:has(.piko-screen:not(.hidden)) #systemStatusBar {
+  display: none;
+}
 .hidden { display: none !important; }
 
 /* ============================================================
@@ -105,8 +1202,8 @@ button {
 }
 
 .record-zone.is-save-ready {
-  border-color: #3d6b52;
-  box-shadow: 0 0 0 3px rgba(61, 107, 82, 0.14);
+  border-color: var(--piko-orange);
+  box-shadow: 0 0 0 3px rgba(241, 110, 28, 0.14);
 }
 
 .record-hint {
@@ -133,13 +1230,13 @@ button {
 }
 
 .esp32-live-monitor.is-live {
-  border-color: #3d6b52;
+  border-color: var(--piko-orange);
   background: rgba(232, 240, 235, 0.85);
 }
 
 .esp32-live-monitor.is-detecting {
-  border-color: #2d8a5e;
-  box-shadow: 0 0 0 2px rgba(45, 138, 94, 0.15);
+  border-color: var(--piko-orange);
+  box-shadow: 0 0 0 2px rgba(241, 110, 28, 0.15);
 }
 
 .esp32-live-label {
@@ -160,7 +1257,7 @@ button {
 .record-point-count {
   margin: 0;
   font-size: 0.85rem;
-  color: #3d6b52;
+  color: var(--piko-orange);
   font-weight: 600;
 }
 
@@ -172,8 +1269,8 @@ button {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #e8f0eb;
-  color: #3d6b52;
+  background: var(--piko-orange-soft);
+  color: var(--piko-orange);
 }
 
 .record-title {
@@ -188,7 +1285,7 @@ button {
   padding: 14px 32px;
   border: none;
   border-radius: 999px;
-  background: #3d6b52;
+  background: var(--piko-orange);
   color: #fff;
   font-size: 1rem;
   font-weight: 650;
@@ -197,7 +1294,7 @@ button {
 }
 
 .record-start-btn:hover {
-  background: #325a44;
+  background: var(--piko-orange-deep);
   transform: translateY(-1px);
 }
 
@@ -261,9 +1358,9 @@ button {
 }
 
 .record-play-btn.is-playing {
-  border-color: #3d6b52;
-  background: #e8f0eb;
-  color: #3d6b52;
+  border-color: var(--piko-orange);
+  background: var(--piko-orange-soft);
+  color: var(--piko-orange);
 }
 
 .record-play-btn .hidden { display: none; }
@@ -280,9 +1377,9 @@ button {
 .lib-btn-icon .hidden { display: none; }
 
 .lib-btn-icon.is-playing {
-  border-color: #3d6b52;
-  background: #e8f0eb;
-  color: #3d6b52;
+  border-color: var(--piko-orange);
+  background: var(--piko-orange-soft);
+  color: var(--piko-orange);
 }
 
 .record-save-label {
@@ -295,7 +1392,7 @@ button {
 .record-save-summary {
   margin: 0;
   font-size: 0.9rem;
-  color: #3d6b52;
+  color: var(--piko-orange);
   font-weight: 600;
 }
 
@@ -325,7 +1422,7 @@ button {
   padding: 12px 24px;
   border: none;
   border-radius: 999px;
-  background: #3d6b52;
+  background: var(--piko-orange);
   color: #fff;
   font-weight: 650;
   cursor: pointer;
@@ -538,8 +1635,8 @@ button {
 }
 
 .lib-card.on-plate {
-  border-color: #3d6b52;
-  box-shadow: 0 0 0 2px rgba(61, 107, 82, 0.12);
+  border-color: var(--piko-orange);
+  box-shadow: 0 0 0 2px rgba(241, 110, 28, 0.12);
 }
 
 .lib-plate-check {
@@ -580,7 +1677,7 @@ button {
 .plate-count-label {
   font-size: 0.82rem;
   font-weight: 600;
-  color: #3d6b52;
+  color: var(--piko-orange);
 }
 
 .plate-panel-desc {
@@ -632,9 +1729,9 @@ button {
 }
 
 .plate-picker-item.is-selected {
-  border-color: #3d6b52;
-  background: #f4faf6;
-  box-shadow: 0 0 0 2px rgba(61, 107, 82, 0.15);
+  border-color: var(--piko-orange);
+  background: var(--piko-orange-soft);
+  box-shadow: 0 0 0 2px rgba(241, 110, 28, 0.15);
 }
 
 .plate-picker-item.is-pending:not(.is-selected) {
@@ -644,7 +1741,7 @@ button {
 .plate-picker-check {
   font-size: 0.9rem;
   font-weight: 700;
-  color: #3d6b52;
+  color: var(--piko-orange);
   line-height: 1;
 }
 
@@ -671,8 +1768,8 @@ button {
 }
 
 .plate-picker-item.is-ready .plate-picker-status {
-  background: #e8f4ee;
-  color: #1c6a4c;
+  background: var(--piko-orange-soft);
+  color: var(--piko-orange-deep);
 }
 
 .plate-picker-item.is-pending .plate-picker-status {
@@ -704,16 +1801,16 @@ button {
 }
 
 .lib-plate-btn:hover {
-  border-color: #3d6b52;
-  color: #3d6b52;
-  background: #f4faf6;
+  border-color: var(--piko-orange);
+  color: var(--piko-orange);
+  background: var(--piko-orange-soft);
 }
 
 .lib-plate-btn.is-on {
   border-style: solid;
-  border-color: #3d6b52;
-  background: #e8f4ee;
-  color: #1c6a4c;
+  border-color: var(--piko-orange);
+  background: var(--piko-orange-soft);
+  color: var(--piko-orange-deep);
 }
 
 .lib-plate-btn.is-pending:not(.is-on) {
@@ -870,8 +1967,8 @@ button {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: #e8f0eb;
-  color: #3d6b52;
+  background: var(--piko-orange-soft);
+  color: var(--piko-orange);
   vertical-align: middle;
 }
 
@@ -903,7 +2000,7 @@ button {
   background: #fff5dd; color: #8a6a00;
   animation: pulse 1.2s ease-in-out infinite;
 }
-.status-analyzed { background: #e8f4ee; color: #1c6a4c; }
+.status-analyzed { background: var(--piko-orange-soft); color: var(--piko-orange-deep); }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
@@ -1230,7 +2327,7 @@ button {
 }
 
 .ts-step.ts-active { color: var(--ink); font-weight: 700; }
-.ts-step.ts-done { color: #1c6a4c; font-weight: 600; }
+.ts-step.ts-done { color: var(--piko-orange-deep); font-weight: 600; }
 .ts-arrow { color: #b9c2c9; font-size: 0.65rem; }
 
 .transform-shell {
@@ -1346,7 +2443,7 @@ button {
   height: 100%;
   width: 0%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #5a8a6a, #8ab09a);
+  background: linear-gradient(90deg, var(--piko-yellow), var(--piko-orange));
   transition: width 900ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -1479,7 +2576,7 @@ button {
 }
 
 .transform-continue-btn:not(:disabled):hover {
-  background: linear-gradient(135deg, #3d6a4d, #5a8a6a);
+  background: linear-gradient(135deg, var(--piko-orange), var(--piko-yellow));
   box-shadow: 0 6px 18px rgba(74, 122, 90, 0.22);
 }
 
@@ -1531,8 +2628,8 @@ button {
 
 .sys-status-pill[data-state="connected"],
 .sys-status-pill[data-state="ready"] {
-  color: #2d6a4f;
-  border-color: rgba(45, 106, 79, 0.35);
+  color: var(--piko-orange);
+  border-color: rgba(241, 110, 28, 0.35);
 }
 
 .sys-status-pill[data-state="recording"],
@@ -1546,7 +2643,7 @@ button {
   padding: 18px 20px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: linear-gradient(135deg, rgba(45, 106, 79, 0.06), rgba(255, 255, 255, 0.9));
+  background: linear-gradient(135deg, rgba(241, 110, 28, 0.06), rgba(255, 255, 255, 0.9));
 }
 
 .integration-panel-head {
@@ -1596,9 +2693,9 @@ button {
 
 .integ-pill[data-state="connected"],
 .integ-pill[data-state="ready"] {
-  color: #2d6a4f;
-  border-color: rgba(45, 106, 79, 0.4);
-  background: rgba(45, 106, 79, 0.08);
+  color: var(--piko-orange);
+  border-color: rgba(241, 110, 28, 0.4);
+  background: rgba(241, 110, 28, 0.08);
 }
 
 .integ-pill[data-state="offline"],
@@ -1714,15 +2811,15 @@ button {
   margin-top: 10px;
   padding: 8px 14px;
   font-size: 0.82rem;
-  border: 1px solid rgba(45, 106, 79, 0.35);
+  border: 1px solid rgba(241, 110, 28, 0.35);
   border-radius: 6px;
-  background: rgba(45, 106, 79, 0.08);
-  color: #2d6a4f;
+  background: rgba(241, 110, 28, 0.08);
+  color: var(--piko-orange);
   cursor: pointer;
 }
 
 .transform-audacity-btn:hover:not(:disabled) {
-  background: rgba(45, 106, 79, 0.16);
+  background: rgba(241, 110, 28, 0.16);
 }
 
 .transform-audacity-btn:disabled {
@@ -1731,8 +2828,8 @@ button {
 }
 
 .esp32-status[data-state="connected"] {
-  color: #2d6a4f;
-  border-color: rgba(45, 106, 79, 0.35);
+  color: var(--piko-orange);
+  border-color: rgba(241, 110, 28, 0.35);
 }
 
 .esp32-status[data-state="error"] {
@@ -1783,7 +2880,7 @@ body.acoustic-win-open {
   gap: 12px;
   padding: 18px 20px 12px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(45, 106, 79, 0.08), transparent);
+  background: linear-gradient(180deg, rgba(241, 110, 28, 0.08), transparent);
 }
 
 .acoustic-win-label {
@@ -1831,8 +2928,8 @@ body.acoustic-win-open {
   width: 36px;
   height: 36px;
   margin: 0 auto 14px;
-  border: 3px solid rgba(45, 106, 79, 0.15);
-  border-top-color: #2d6a4f;
+  border: 3px solid rgba(241, 110, 28, 0.15);
+  border-top-color: var(--piko-orange);
   border-radius: 50%;
   animation: acoustic-spin 0.8s linear infinite;
 }
@@ -1864,7 +2961,7 @@ body.acoustic-win-open {
 }
 
 .acoustic-win-steps li.is-ok {
-  color: #2d6a4f;
+  color: var(--piko-orange);
 }
 
 .acoustic-win-steps li.is-fail {
@@ -1915,13 +3012,13 @@ body.acoustic-win-open {
 }
 
 .acoustic-win-btn.primary {
-  color: #2d6a4f;
-  border-color: rgba(45, 106, 79, 0.35);
-  background: rgba(45, 106, 79, 0.08);
+  color: var(--piko-orange);
+  border-color: rgba(241, 110, 28, 0.35);
+  background: rgba(241, 110, 28, 0.08);
 }
 
 .acoustic-win-btn.primary:hover:not(:disabled) {
-  background: rgba(45, 106, 79, 0.16);
+  background: rgba(241, 110, 28, 0.16);
 }
 
 .acoustic-win-btn:disabled {
@@ -1953,7 +3050,7 @@ body.acoustic-win-open {
 .acoustic-export-item {
   padding: 6px 8px;
   border-radius: 6px;
-  background: rgba(45, 106, 79, 0.06);
+  background: rgba(241, 110, 28, 0.06);
 }
 
 .acoustic-export-item b {
@@ -1973,5 +3070,5 @@ body.acoustic-win-open {
 }
 
 .lib-btn-acoustic {
-  color: #2d6a4f;
+  color: var(--piko-orange);
 }

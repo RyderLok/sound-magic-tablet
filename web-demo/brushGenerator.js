@@ -6,7 +6,7 @@ class BrushGenerator {
     this.eraseWaves = [];
     this.maxClusters = 72;
     this.particlesPerCluster = 320;
-    this.POINT_ALPHA = 18;
+    this.POINT_ALPHA = 26;
     this.TRAIL_FADE = 14;
     this.LIVE_TRAIL_FADE = 3;
     this.persistStrokes = true;
@@ -208,57 +208,79 @@ class BrushGenerator {
   }
 
   patternProfile(pattern, brush, energy, meta) {
-    const d = this.clamp01(brush.density ?? brush.particleDensity ?? 0.35);
-    // Radius follows scale/strokeWidth — not the same axis as motion/energy.
+    // Within-class knobs from acoustic mapping (not a single "intensity").
+    const d = this.clamp01(brush.spawnRate ?? brush.density ?? brush.particleDensity ?? 0.35);
     const scale = this.clamp01(
-      brush.scaleResponse ?? brush.strokeWidth ?? 0.35
+      brush.brushSize ?? brush.scaleResponse ?? brush.strokeWidth ?? 0.35
     );
-    const motion = this.clamp01(brush.motion ?? energy ?? 0.35);
+    const motion = this.clamp01(brush.movementSpeed ?? brush.motion ?? brush.localMotion ?? energy ?? 0.35);
+    const turb = this.clamp01(brush.turbulence ?? 0.35);
+    const particleSize = this.clamp01(brush.particleSize ?? (1 - scale) * 0.5 + 0.25);
+    const gap = this.clamp01(brush.gapProbability ?? 0.3);
+    const trail = this.clamp01(brush.trailLength ?? brush.continuity ?? 0.4);
+    const vibAmp = this.clamp01(brush.vibrationAmplitude ?? turb * 0.5);
+    const vibFreq = this.clamp01(brush.vibrationFrequency ?? brush.pulseRate ?? brush.rotationSpeed ?? 0.4);
+    const expand = this.clamp01(brush.expansion ?? scale);
     switch (pattern) {
       case "scatter_points":
         return {
-          count: Math.floor(lerp(40, 90, d)),
-          radius: lerp(10, 22, scale),
-          maxAge: 1,
-          pointAlpha: 28,
-          trailFade: 10,
-          hopRate: 0.012
+          count: Math.floor(lerp(36, 110, d)),
+          radius: lerp(8, 20, scale) * lerp(0.75, 1.15, 1 - particleSize),
+          maxAge: lerp(0.7, 1.15, trail),
+          pointAlpha: Math.floor(lerp(22, 40, 1 - gap)),
+          trailFade: Math.floor(lerp(6, 16, 1 - trail)),
+          hopRate: lerp(0.006, 0.028, motion) * lerp(0.8, 1.4, gap),
+          jitter: turb,
+          vibAmp,
+          vibFreq
         };
       case "wave_ripple":
         return {
-          count: Math.floor(lerp(180, 280, d)),
-          radius: lerp(20, 38, scale),
-          maxAge: 1,
+          count: Math.floor(lerp(160, 300, d)),
+          radius: lerp(18, 44, scale) * lerp(0.9, 1.25, expand),
+          maxAge: lerp(0.85, 1.2, trail),
           pointAlpha: 16,
-          trailFade: 12,
-          waveFreq: lerp(0.05, 0.12, motion)
+          trailFade: Math.floor(lerp(8, 18, 1 - trail)),
+          waveFreq: lerp(0.04, 0.14, vibFreq) * lerp(0.85, 1.2, motion),
+          jitter: turb,
+          vibAmp
         };
       case "impact_burst":
         return {
-          count: Math.floor(lerp(120, 260, d)),
-          radius: meta?.half ? lerp(14, 28, scale) : lerp(28, 52, scale),
-          maxAge: meta?.burst ? 0.55 : 0.35,
+          count: Math.floor(lerp(100, 280, d)),
+          radius: (meta?.half ? lerp(12, 30, scale) : lerp(24, 56, scale)) * lerp(0.85, 1.35, expand),
+          maxAge: meta?.burst ? lerp(0.4, 0.7, trail) : lerp(0.28, 0.5, trail),
           pointAlpha: 32,
-          trailFade: 22,
-          burstForce: meta?.burst ? lerp(1.0, 1.6, motion) : lerp(0.6, 1.0, motion)
+          trailFade: Math.floor(lerp(14, 28, gap)),
+          burstForce: (meta?.burst ? lerp(1.0, 1.7, expand) : lerp(0.55, 1.15, expand)) * lerp(0.9, 1.25, motion),
+          jitter: turb,
+          vibAmp,
+          vibFreq
         };
       case "pulse_grid":
         return {
-          count: Math.floor(lerp(100, 200, d)),
-          radius: lerp(14, 30, scale),
+          count: Math.floor(lerp(90, 220, d)),
+          radius: lerp(12, 32, scale) * lerp(0.8, 1.1, 1 - particleSize),
           maxAge: 1,
           pointAlpha: 20,
-          trailFade: 13,
-          vibrateFreq: lerp(0.06, 0.14, brush.rotationSpeed ?? motion)
+          trailFade: Math.floor(lerp(9, 18, 1 - trail)),
+          vibrateFreq: lerp(0.05, 0.18, vibFreq) * lerp(0.85, 1.3, vibAmp),
+          spacing: lerp(0.7, 1.35, brush.spacing ?? (1 - d)),
+          jitter: turb,
+          vibAmp,
+          vibFreq
         };
       default:
         return {
-          count: Math.floor(lerp(260, this.particlesPerCluster, d)),
-          radius: lerp(24, 46, scale),
-          maxAge: 1,
+          count: Math.floor(lerp(220, this.particlesPerCluster, d)),
+          radius: lerp(22, 48, scale),
+          maxAge: lerp(0.85, 1.15, trail),
           pointAlpha: this.POINT_ALPHA,
-          trailFade: this.TRAIL_FADE,
-          flowStrength: lerp(0.7, 1.25, motion)
+          trailFade: Math.floor(lerp(8, this.TRAIL_FADE + 4, 1 - trail)),
+          flowStrength: lerp(0.65, 1.35, motion) * lerp(0.85, 1.2, trail),
+          jitter: turb,
+          vibAmp,
+          vibFreq
         };
     }
   }
@@ -498,49 +520,56 @@ class BrushGenerator {
   }
 
   computeClusterField(cluster) {
-    const vol = this.smoothed.volume;
+    const brush = window.activeBrushParams || {};
+    const vol = this.clamp01(brush.brushSize ?? brush.scaleResponse ?? this.smoothed.volume);
+    const move = this.clamp01(brush.movementSpeed ?? brush.motion ?? this.smoothed.centroid);
+    const turb = this.clamp01(brush.turbulence ?? brush.jitter ?? this.smoothed.high);
+    const vibAmp = this.clamp01(brush.vibrationAmplitude ?? turb * 0.5);
+    const vibFreq = this.clamp01(brush.vibrationFrequency ?? brush.pulseRate ?? 0.4);
+    const vibRand = this.clamp01(brush.vibrationRandomness ?? turb * 0.6);
     const low = this.smoothed.low;
     const high = this.smoothed.high;
     const centroid = this.smoothed.centroid;
     const pattern = cluster.pattern || "flow_field";
-    const profile = this.patternProfile(pattern, window.activeBrushParams || {}, vol, cluster.meta);
+    const profile = this.patternProfile(pattern, brush, move, cluster.meta);
     const minSide = cluster.baseRadius * 2.4;
-    const baseRadius = cluster.baseRadius * lerp(0.55, 1.05, vol);
+    const baseRadius = cluster.baseRadius * lerp(0.55, 1.15, vol);
 
-    let centripetal = lerp(0.028, 0.004, vol);
-    let centrifugal = vol * 0.38;
-    let noiseScale = lerp(0.006, 0.042, high * 0.85 + centroid * 0.15);
-    let noiseForce = lerp(0.035, 0.42, low);
+    let centripetal = lerp(0.028, 0.004, move);
+    const burstBoost = Math.max(0, (Number(profile.burstForce) || 1) - 1) * 0.15;
+    let centrifugal = vol * 0.22 + burstBoost;
+    let noiseScale = lerp(0.006, 0.048, turb * 0.55 + centroid * 0.25 + high * 0.2);
+    let noiseForce = lerp(0.03, 0.48, turb * 0.6 + vibAmp * 0.3 + low * 0.1);
 
     if (pattern === "scatter_points") {
-      centripetal = lerp(0.04, 0.015, vol);
-      centrifugal = vol * 0.12;
-      noiseForce *= 0.25;
+      centripetal = lerp(0.04, 0.012, move);
+      centrifugal = vol * 0.1 + vibAmp * 0.08;
+      noiseForce *= lerp(0.2, 0.55, vibRand);
     } else if (pattern === "flow_field") {
-      noiseForce = lerp(0.08, 0.55, low);
-      centripetal = lerp(0.018, 0.003, vol);
+      noiseForce = lerp(0.08, 0.58, turb);
+      centripetal = lerp(0.018, 0.003, move);
     } else if (pattern === "wave_ripple") {
-      noiseForce = lerp(0.04, 0.28, low);
-      centripetal = lerp(0.022, 0.006, vol);
+      noiseForce = lerp(0.04, 0.32, turb * 0.7 + vibAmp * 0.3);
+      centripetal = lerp(0.022, 0.006, move);
     } else if (pattern === "impact_burst") {
-      centripetal = lerp(0.008, 0.002, vol);
-      centrifugal = vol * 0.85 * (profile.burstForce || 1);
-      noiseForce *= 0.15;
+      centripetal = lerp(0.008, 0.002, move);
+      centrifugal = (brush.expansion ?? vol) * 0.9 * (profile.burstForce || 1);
+      noiseForce *= lerp(0.12, 0.35, vibRand);
     } else if (pattern === "pulse_grid") {
-      noiseForce = lerp(0.05, 0.32, low);
-      centripetal = lerp(0.03, 0.01, vol);
+      noiseForce = lerp(0.05, 0.36, turb);
+      centripetal = lerp(0.03, 0.01, move);
     }
 
-    cluster.t += 0.004 + centroid * 0.014 + high * 0.008 + (this.esp32Drift || 0) * 0.003;
+    cluster.t += 0.003 + move * 0.012 + vibFreq * 0.01 + (this.esp32Drift || 0) * 0.003;
 
     return {
       cx: cluster.cx,
       cy: cluster.cy,
       pattern,
       waveAngle: cluster.meta?.waveAngle ?? 0,
-      waveAmp: cluster.meta?.waveAmp ?? 12,
+      waveAmp: (cluster.meta?.waveAmp ?? 12) * lerp(0.7, 1.4, vibAmp),
       waveFreq: profile.waveFreq ?? 0.08,
-      vibrateFreq: profile.vibrateFreq ?? 0.1,
+      vibrateFreq: profile.vibrateFreq ?? lerp(0.06, 0.16, vibFreq),
       burstForce: profile.burstForce ?? 1,
       hopRate: profile.hopRate ?? 0,
       minSide,
@@ -551,7 +580,10 @@ class BrushGenerator {
       centrifugal,
       noiseScale,
       noiseForce,
-      respawnSigma: cluster.baseRadius * lerp(0.28, 0.5, vol),
+      vibAmp,
+      vibFreq,
+      vibRand,
+      respawnSigma: cluster.baseRadius * lerp(0.28, 0.55, brush.gapProbability ?? vol),
       maxDist: cluster.baseRadius * (pattern === "impact_burst" ? 1.8 : 1.05),
       seed: cluster.seed,
       t: cluster.t
@@ -722,16 +754,24 @@ class BrushGenerator {
 
   particleColor(palette, particle, fallbackInk) {
     if (!palette.length) return fallbackInk;
-    const shift = this.smoothed.centroid * 2.5 + this.smoothed.high * 1.5;
-    const idx = Math.floor(Math.abs(particle.colorSeed + shift)) % palette.length;
+    // Spread seeds across full palette — avoid clustering on first warm swatch.
+    const af = window.activeAcousticFeatures || {};
+    const spread =
+      (this.smoothed.centroid || 0) * 1.2
+      + (this.smoothed.high || 0) * 0.9
+      + (af.spectralCentroid || 0) * 1.4
+      + (af.trebleRatio || 0) * 1.1
+      + (particle.orbit || 0) * 2.2;
+    const idx = Math.floor(Math.abs(particle.colorSeed * 1.7 + spread * 3.1)) % palette.length;
     const base = palette[idx];
     if (typeof SoundColorEngine === "undefined") return base;
+    // Light modulate — heavy warm push was washing cool hues into gold mud.
     return SoundColorEngine.liveModulate(base, {
       bass: this.smoothed.low,
       mid: this.smoothed.mid,
       treble: this.smoothed.high,
       volume: this.smoothed.volume
-    }, 0.22);
+    }, 0.12);
   }
 
   resolveInkColor(visualParameters) {

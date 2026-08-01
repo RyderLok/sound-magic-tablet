@@ -16,6 +16,18 @@ const NaturalSoundArchetypes = {
     pulse_grid: { zh: "脉冲栅格", en: "Pulse Grid" }
   },
 
+  categoryToPattern: {
+    birds: "scatter_points",
+    wind_leaves: "flow_field",
+    water: "wave_ripple",
+    material_impact: "impact_burst",
+    insects_amphibians: "pulse_grid"
+  },
+
+  patternFor(categoryId) {
+    return this.categoryToPattern[categoryId] || null;
+  },
+
   biasToArchetype: {
     bright_warm: "birds",
     cool_muted: "wind_leaves",
@@ -24,16 +36,18 @@ const NaturalSoundArchetypes = {
     mid_high_buzz: "insects_amphibians"
   },
 
-  resolveArchetypeId(vs, exportData) {
-    return vs?.archetypeId
-      || exportData?.naturalArchetype?.id
-      || this.biasToArchetype[vs?.paletteBias]
+  resolveArchetypeId(vs, exportData, pyData) {
+    // Qwen is the sole category source for strokePattern.
+    return pyData?.semantic?.archetype
+      || exportData?.category
+      || vs?.archetypeId
+      || exportData?.visualStructure?.archetypeId
       || null;
   },
 
-  buildSignaturePalette(features, archetypeId) {
+  buildSignaturePalette(features, archetypeId, acousticFeatures) {
     if (typeof SoundColorEngine !== "undefined") {
-      return SoundColorEngine.buildFromFeatures(features, archetypeId);
+      return SoundColorEngine.buildFromFeatures(features, archetypeId, acousticFeatures);
     }
     return [{ r: 180, g: 120, b: 90 }];
   },
@@ -70,18 +84,7 @@ const NaturalSoundArchetypes = {
       window.App.canvasInteraction.leftField.updatePalette(palette);
     }
 
-    const hints = vs?.brushHints || {};
-    if (window.activeBrushParams && hints) {
-      window.activeBrushParams = {
-        ...window.activeBrushParams,
-        density: hints.density ?? window.activeBrushParams.density,
-        turbulence: hints.turbulence ?? window.activeBrushParams.turbulence,
-        motion: hints.motion ?? window.activeBrushParams.motion,
-        continuity: hints.continuity ?? window.activeBrushParams.continuity,
-        smoothness: hints.smoothness ?? window.activeBrushParams.smoothness,
-        rotationSpeed: hints.rotationSpeed ?? window.activeBrushParams.rotationSpeed
-      };
-    }
+    // Category templates must not overwrite acoustic brushParams.
     window.activeFusedVisualParams = vp;
     return vp;
   },
@@ -90,11 +93,15 @@ const NaturalSoundArchetypes = {
     const features = pyData?.features;
     if (!features) return null;
     const exportData = pyData.analysisExport || {};
-    const vs = pyData.analysisExport?.visualStructure || pyData.visualStructure || null;
-    const archetypeId = this.resolveArchetypeId(vs, exportData);
-    const palette = this.buildSignaturePalette(features, archetypeId);
-    window.activeNaturalArchetype = exportData.naturalArchetype || null;
+    const vs = exportData.visualStructure || pyData.visualStructure || null;
+    const archetypeId = this.resolveArchetypeId(vs, exportData, pyData);
+    const acousticFeatures = exportData.acousticFeatures || pyData.acousticFeatures || null;
+    const palette = this.buildSignaturePalette(features, archetypeId, acousticFeatures);
+    window.activeNaturalArchetype = archetypeId
+      ? { id: archetypeId, labelZh: this.labels[archetypeId]?.zh, source: "qwen" }
+      : null;
     window.activeVisualStructure = vs;
+    window.activeAcousticFeatures = acousticFeatures;
     return this.stampVisualParams(vs, archetypeId, palette, pyData);
   },
 
@@ -104,11 +111,15 @@ const NaturalSoundArchetypes = {
     if (!vs && !features) return null;
 
     const exportData = pyData.analysisExport || {};
-    window.activeNaturalArchetype = exportData.naturalArchetype || null;
+    const archetypeId = this.resolveArchetypeId(vs, exportData, pyData);
+    const acousticFeatures = exportData.acousticFeatures || null;
+    window.activeNaturalArchetype = archetypeId
+      ? { id: archetypeId, labelZh: this.labels[archetypeId]?.zh, source: "qwen" }
+      : null;
     window.activeVisualStructure = vs;
+    window.activeAcousticFeatures = acousticFeatures;
 
-    const archetypeId = this.resolveArchetypeId(vs, exportData);
-    const palette = this.buildSignaturePalette(features, archetypeId);
+    const palette = this.buildSignaturePalette(features, archetypeId, acousticFeatures);
     return this.stampVisualParams(vs, archetypeId, palette, pyData);
   },
 

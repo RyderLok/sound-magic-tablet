@@ -50,7 +50,14 @@ class VisualMappingEngine {
 
   buildPalette(warmth, playful, brightness, bass, treble, variation, seed, features) {
     if (typeof SoundColorEngine !== "undefined" && features && (features.volume != null || features.bass != null)) {
-      return SoundColorEngine.buildFromFeatures(features, null);
+      // Prefer Qwen category when already known — never force null (collapses to warm mud).
+      const arch =
+        window.pythonSemantic?.archetype
+        || window.pythonAnalysisExport?.category
+        || window.activeVisualParams?.archetypeId
+        || null;
+      const acoustic = window.pythonAnalysisExport?.acousticFeatures || window.activeAcousticFeatures || null;
+      return SoundColorEngine.buildFromFeatures(features, arch, acoustic);
     }
     const hueBase = this.clamp01(warmth) * 55 + (1 - this.clamp01(warmth)) * 210;
     const hueSpread = 18 + variation * 72 + playful * 28;

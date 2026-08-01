@@ -2,7 +2,7 @@
 
 用户从 Mac 迁回 Windows 后，**期望零手动配置**：Agent 应自动把项目跑起来，不要反复问「要不要启动服务」。
 
-文档：[`README.md`](./README.md) · [`技术说明书.md`](./技术说明书.md) · [`UI设计PRD与信息架构.md`](./UI设计PRD与信息架构.md)
+文档：[`README.md`](./README.md) · [`技术说明书.md`](./技术说明书.md)
 
 ## 打开本项目后（Windows，优先）
 
@@ -33,12 +33,17 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
 - 录音持久化：`web-demo/sampleLibraryStore.js`（IndexedDB，浏览器本地）
 - 画板多 brush：`web-demo/plateManager.js`（最多 5 段，共享 plate）
 
+## 临时页（随时可删，非产品功能）
+
+- `web-demo/brush-preview.html`、`brush-preview-presets.json`、`brush-stamps/` 是**随时要删**的笔刷对照/截图页
+- 不要当正式入口、不要写进用户主流程；用户说删就整组删，无需迁移
+
 ## 可选：SiliconFlow Qwen3-Omni 语义分析
 
 - 配置：`python-service/.env`（自 `.env.example` 复制，**勿提交** `.env`）
 - 环境变量：`SILICONFLOW_API_KEY`、`SILICONFLOW_OMNI_MODEL`、`SILICONFLOW_BASE_URL`
-- 生效点：`POST /analyze/wav` → `semantic`（灰度五类，与本地 archetype 同 id）
-- **不**覆盖本地 `strokePattern` / `brushParams`；失败则为 `null` + `semanticError`
+- 生效点：`POST /analyze/wav` → Qwen `semantic.archetype` **决定** `strokePattern`；本地 `acousticFeatures` 决定类内 `brushParams`
+- 失败：`semantic=null` + `semanticError`（无类别则不定笔刷算法）；映射见 `python-service/BRUSH_ACOUSTIC_MAPPING.md`
 - 验证：`http://127.0.0.1:8001/health` 中 `omni.configured === true`
 - **禁止**把 API Key 写进前端或对话日志
 

@@ -1,12 +1,13 @@
 # Piko — ESP32 Live Audio Pipeline
 
 > **完整产品技术说明：** 见 [`技术说明书.md`](./技术说明书.md)（架构、工作流、模块、协议、部署）  
-> **UI 设计 PRD / 信息架构：** 见 [`UI设计PRD与信息架构.md`](./UI设计PRD与信息架构.md)（页面树、交互主路径、验收标准）  
 > **修改记录：** 见 [`CHANGELOG.md`](./CHANGELOG.md) 或说明书 §17
 
 Real-time path from **ESP32 + INMP441** to **p5.js** generative visual system, with **Python** turning sound into visual structure (waveform, spectrum, spectrogram → features → brush).
 
-**产品流：** Collect（Library 录音）→ Transform（材料化）→ Draw（单样本或色盘 Plate ≤5）。语义识别（Qwen 五类）只解释声音，不覆盖本地笔触造型。
+**产品流：** Collect（Library 录音）→ Transform（材料化）→ Draw（单样本或色盘 Plate ≤5）。
+
+**声音→笔刷（当前）：** Qwen 五类决定用哪套笔刷算法（`strokePattern`）；本地 librosa 声学特征只在该类 `BRUSH_RANGES` 内调节尺寸/密度/湍流/节奏等。详见 [`python-service/BRUSH_ACOUSTIC_MAPPING.md`](./python-service/BRUSH_ACOUSTIC_MAPPING.md)。
 
 ```
 ESP32 (INMP441 I2S)
@@ -131,28 +132,31 @@ http://localhost:8000
 2. **Spectrum** — frequency energy distribution  
 3. **Spectrogram** — time–frequency map  
 4. **Features** — MFCC, bands, tempo, pitch → **Brush** → p5.js visuals  
-5. **Semantic (grayscale)** — SiliconFlow `Qwen/Qwen3-Omni-30B-A3B-Instruct` → 五类自然声 `semantic`（与本地 archetype 同 id）  
+5. **Category (Qwen)** — 五类之一 → `strokePattern`（哪套 BrushGenerator）  
+6. **Within-class (local)** — `acousticFeatures` → `brushParams`（同类录音的可见差异）
 
 API: `POST http://localhost:8001/analyze/wav` (multipart WAV file)
 
-### SiliconFlow Qwen3-Omni semantic analysis（灰度五类）
+### Qwen 定类 + 本地类内笔刷（当前）
 
-Server-side only (API Key never sent to the browser). When configured, `/analyze/wav` adds:
+| 来源 | 决定 | 不决定 |
+|------|------|--------|
+| Qwen | `birds` 等五类 → `scatter_points` / `flow_field` / … | 具体疏密、大小数值 |
+| 本地声学 | rms/centroid/roughness/tempo… → brushSize、turbulence、spawnRate… | 换另一套笔刷算法 |
 
 ```json
-"semantic": {
-  "archetype": "birds|wind_leaves|water|material_impact|insects_amphibians",
-  "archetypeLabelZh": "...",
-  "soundLabel": "...",
-  "description": "...",
-  "possibleSources": ["..."],
-  "audibleEvents": ["..."],
-  "confidence": 0.0
+"semantic": { "archetype": "birds", "archetypeLabelZh": "鸟类", "...": "..." },
+"analysisExport": {
+  "category": "birds",
+  "strokePattern": "scatter_points",
+  "acousticFeatures": { "rms": 0.62, "spectralCentroid": 0.74, "...": "..." },
+  "brushParams": { "brushSize": 0.48, "turbulence": 0.51, "vibrationAmplitude": 0.47, "...": "..." }
 }
 ```
 
-- Qwen is the **sole semantic** source; does **not** override local `strokePattern` / `brushParams`
-- On missing key, timeout, or parse failure → `semantic: null` + `semanticError`（UI：声音识别失败，请重试）
+- Qwen 失败 → `semantic: null` + `semanticError`（「声音识别失败，请重试」），**无类别则不定 `strokePattern`**
+- 音量不再同时拉高密度/速度/尺寸；震动由 roughness+flux+少量 rms+onset 合成
+- 映射说明：`python-service/BRUSH_ACOUSTIC_MAPPING.md`
 
 Setup:
 
@@ -195,13 +199,15 @@ Health: `http://127.0.0.1:8001/health` → `omni.configured`
 | `web-demo/pythonEnhancementClient.js` | Python WebSocket + REST client |
 | `web-demo/featureSchema.js` | Unified feature schema adapter |
 | `python-service/app.py` | FastAPI + librosa analysis + optional `semantic` |
-| `python-service/siliconflow_omni.py` | SiliconFlow Qwen3-Omni semantic analysis |
+| `python-service/siliconflow_omni.py` | Qwen 五类定类 |
+| `python-service/acoustic_features.py` | 本地声学特征（0–1） |
+| `python-service/brush_mapper.py` | 类内 brushParams + BRUSH_RANGES |
+| `python-service/BRUSH_ACOUSTIC_MAPPING.md` | 声音→笔刷映射说明 |
 | `python-service/.env.example` | Env template for Omni (copy to `.env`, gitignored) |
 | `web-demo/generativeField.js` | Sound breathing (ESP32-aware) |
 | `web-demo/brushGenerator.js` | Draw brush (ESP32-aware) |
 | `web-demo/sampleLibraryStore.js` | IndexedDB 录音持久化 |
 | `web-demo/plateManager.js` | 画板多 brush（最多 5） |
-| `UI设计PRD与信息架构.md` | UI / IA / 轻量 PRD（设计用） |
 | `python-service/start-python.ps1` | Windows 一键启动 Python |
 | `bridge/start-bridge-mac.sh` | Mac 临时 Bridge（可选） |
 

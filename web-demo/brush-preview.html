@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Piko · Five brush preview (temporary)</title>
+  <style>
+    :root {
+      --bg: #f2efe7;
+      --ink: #2a2926;
+      --muted: #6e6a62;
+      --line: #d9d2c4;
+      --accent: #3d5a45;
+      --paper: #f8f7f4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      background:
+        radial-gradient(1000px 500px at 0% 0%, #fff8ea 0%, transparent 55%),
+        radial-gradient(800px 400px at 100% 0%, #e4ebe6 0%, transparent 50%),
+        var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+    header { padding: 18px 22px 6px; max-width: 1200px; margin: 0 auto; }
+    h1 { margin: 0; font-size: 1.45rem; font-weight: 600; }
+    .sub { margin: 6px 0 0; color: var(--muted); font-size: 0.92rem; }
+    .badge {
+      display: inline-block; margin-top: 8px; font-size: 0.72rem; color: var(--muted);
+      border: 1px solid var(--line); padding: 2px 8px;
+    }
+    .layout {
+      max-width: 1200px; margin: 0 auto; padding: 10px 22px 28px;
+      display: grid; grid-template-columns: 280px 1fr; gap: 16px;
+    }
+    @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+    .panel { border-top: 1px solid var(--line); padding-top: 12px; }
+    .panel h2 {
+      margin: 0 0 8px; font-size: 0.78rem; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted); font-weight: 600;
+    }
+    .cat-btn, .var-btn {
+      display: block; width: 100%; text-align: left; margin: 0 0 6px;
+      padding: 9px 11px; border: 1px solid var(--line);
+      background: rgba(255,255,255,0.45); color: var(--ink);
+      cursor: pointer; font: inherit; font-size: 0.9rem;
+    }
+    .cat-btn strong { display: block; }
+    .cat-btn span, .var-btn span { color: var(--muted); font-size: 0.75rem; }
+    .cat-btn.active, .var-btn.active {
+      border-color: var(--accent); background: rgba(61,90,69,0.1);
+    }
+    .var-list { margin-top: 10px; }
+    .palette-row {
+      display: flex; height: 28px; border: 1px solid var(--line); margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .palette-row i { flex: 1; display: block; }
+    .canvas-wrap {
+      border: 1px solid var(--line); background: var(--paper); min-height: 520px;
+    }
+    #previewHolder { width: 100%; height: 560px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .toolbar button {
+      border: 1px solid var(--line); background: #fff; padding: 7px 12px;
+      cursor: pointer; font: inherit; font-size: 0.85rem;
+    }
+    .meta {
+      margin-top: 8px; font-size: 0.78rem; color: var(--muted);
+      line-height: 1.45; font-family: ui-monospace, Menlo, monospace;
+    }
+    .hint { margin-top: 8px; font-size: 0.85rem; color: var(--muted); }
+    .summary-board {
+      max-width: 1180px;
+      margin: 8px auto 40px;
+      padding: 28px 24px 32px;
+      background: #e8e8e6;
+      border: 1px solid #d0d0cc;
+    }
+    .summary-board h2 {
+      margin: 0 0 6px;
+      font-size: 1.15rem;
+      font-weight: 600;
+      text-align: center;
+      letter-spacing: 0.04em;
+    }
+    .summary-board .sum-sub {
+      text-align: center;
+      color: #666;
+      font-size: 0.85rem;
+      margin: 0 0 22px;
+    }
+    .summary-section-title {
+      margin: 18px 0 12px;
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #666;
+      text-align: center;
+    }
+    .stamp-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 18px 10px;
+      justify-items: center;
+    }
+    @media (max-width: 720px) {
+      .stamp-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .stamp-cell {
+      width: 100%;
+      max-width: 180px;
+      text-align: center;
+    }
+    .stamp-cell canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 0 auto;
+      background: #e8e8e6;
+    }
+    .stamp-cell .stamp-title {
+      margin: 8px 0 2px;
+      font-size: 0.92rem;
+      font-weight: 600;
+    }
+    .stamp-cell .stamp-algo {
+      font-size: 0.72rem;
+      color: #777;
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    .stamp-cell .stamp-traits {
+      margin-top: 4px;
+      font-size: 0.78rem;
+      color: #555;
+      line-height: 1.35;
+    }
+    .summary-actions {
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .summary-actions button {
+      border: 1px solid #bbb;
+      background: #fff;
+      padding: 8px 14px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85rem;
+      margin: 0 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Piko · Five brush full preview</h1>
+    <p class="sub">
+      Same stack as the main app: <code>BrushGenerator</code> + <code>SoundColorEngine</code> + <code>brush_mapper</code>
+      · Fingerprint board below is for screenshots
+    </p>
+    <div class="badge">Temporary · not saved to library · disposable</div>
+  </header>
+
+  <!-- Screenshot-friendly brush fingerprint board -->
+  <section class="summary-board" id="summaryBoard">
+    <h2>Brush fingerprint summary</h2>
+    <p class="sum-sub">Stipple fingerprints · density / edge / turbulence show between-class and within-class differences</p>
+    <div class="summary-actions">
+      <button type="button" id="renderSummaryBtn">Regenerate fingerprints</button>
+    </div>
+    <p class="summary-section-title">Five base forms (Qwen → algorithm)</p>
+    <div class="stamp-grid" id="categoryStampGrid"></div>
+    <p class="summary-section-title">Within-class variants (same algorithm · different acoustics)</p>
+    <div class="stamp-grid" id="variantStampGrid" style="grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));"></div>
+  </section>
+
+  <div class="layout">
+    <aside class="panel">
+      <h2>Qwen class → algorithm</h2>
+      <div id="catList"></div>
+      <div class="var-list">
+        <h2>Within-class variants (local acoustics)</h2>
+        <div id="varList"></div>
+      </div>
+      <div class="toolbar">
+        <button type="button" id="demoBtn">Demo stroke</button>
+        <button type="button" id="clearBtn">Clear</button>
+      </div>
+      <p class="hint" id="statusHint">Loading presets…</p>
+    </aside>
+    <section class="panel">
+      <h2>Color palette (same as main app)</h2>
+      <div class="palette-row" id="paletteRow"></div>
+      <h2>Canvas</h2>
+      <div class="canvas-wrap"><div id="previewHolder"></div></div>
+      <p class="meta" id="paramMeta">—</p>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+  <script>
+    // Instance-mode polyfill — same globals BrushGenerator expects in main app.
+    window.PI = Math.PI;
+    window.TWO_PI = Math.PI * 2;
+    window.HALF_PI = Math.PI / 2;
+    window.lerp = (a, b, t) => a + (b - a) * t;
+    window.constrain = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+    window.map = (n, a, b, c, d) => ((n - a) / (b - a)) * (d - c) + c;
+    window.randomGaussian = function (mean, sd) {
+      mean = mean == null ? 0 : mean;
+      sd = sd == null ? 1 : sd;
+      let u = 0, v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return mean + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    };
+    window.noise = (x, y, z) => {
+      const n = Math.sin(x * 12.9898 + (y || 0) * 78.233 + (z || 0) * 37.719) * 43758.5453;
+      return n - Math.floor(n);
+    };
+    window.FeatureSchema = {
+      mergeFeatures(a, b) { return Object.assign({}, a || {}, b || {}); },
+      normalizeFeatures(f) { return f || {}; },
+      clamp01(v) { return Math.min(1, Math.max(0, v || 0)); }
+    };
+  </script>
+  <script src="soundColorEngine.js"></script>
+  <script src="brushGenerator.js"></script>
+  <script>
+    let PRESETS = null;
+    let catId = "wind_leaves";
+    let varName = null;
+    let brush = null;
+    let artLayer = null;
+    let persistLayer = null;
+    let drawing = false;
+    let prev = null;
+    let p5ref = null;
+
+    /** Trait blurbs for screenshot captions */
+    const CATEGORY_TRAITS = {
+      birds: {
+        algo: "scatter_points",
+        traits: "Pointillist hops · sparse pulses · lots of white space"
+      },
+      wind_leaves: {
+        algo: "flow_field",
+        traits: "Flow fog · continuous drift · filament stacks"
+      },
+      water: {
+        algo: "wave_ripple",
+        traits: "Ripple waves · layered rise · stable direction"
+      },
+      material_impact: {
+        algo: "impact_burst",
+        traits: "Impact burst · instant spread · fast decay"
+      },
+      insects_amphibians: {
+        algo: "pulse_grid",
+        traits: "Pulse grid · rhythmic repeats · regular or staggered"
+      }
+    };
+    const VARIANT_TRAITS = {
+      "High short chirps": "Smaller denser particles · fast hops",
+      "Low slow calls": "Larger sparser particles · slow motion",
+      "Continuous birdsong": "More connected points · less white space",
+      "Sparse hops": "More white space · spaced hops",
+      "Rough calls": "Broken edges · irregular motion",
+      "Light breeze": "Sparse flow · soft and slow",
+      "Strong wind": "Longer streamlines · large displacement · strong turbulence",
+      "Leaf rustle": "Local jitter · fine grain",
+      "Drips": "Small range · intermittent ripples",
+      "Stream": "Continuous fine flow · stable direction",
+      "Ocean waves": "Large amplitude · long period · more layers",
+      "Light tap": "Small short burst",
+      "Heavy strike": "Large radius · fast spread",
+      "Repeated knocks": "Multiple bursts on a beat",
+      "Rough scrape": "More broken burst edges",
+      "High insect chirps": "Dense small pulses",
+      "Low frog calls": "Large slow pulses",
+      "Steady rhythm": "Regular grid spacing",
+      "Irregular rhythm": "More random spacing and triggers"
+    };
+
+    window.activeBrushParams = {};
+    window.activeVisualParams = { strokePattern: "flow_field", palette: [] };
+    window.activeFusedVisualParams = window.activeVisualParams;
+    window.activeVisualStructure = { strokePattern: "flow_field" };
+    window.activeAudioFeatures = {};
+    window.activeAcousticFeatures = {};
+
+    function pct(v) { return Math.round((v || 0) * 100) + "%"; }
+
+    function acousticToLegacyFeatures(af) {
+      const a = af || {};
+      return {
+        volume: a.rms || 0.4,
+        energy: Math.min(1, (a.rms || 0) * 0.55 + (a.peak || 0) * 0.25),
+        brightness: a.spectralCentroid || 0.4,
+        roughness: a.roughness || 0.3,
+        pitch: a.spectralCentroid || 0.4,
+        tempo: a.tempo || 0.4,
+        spectralCentroid: a.spectralCentroid || 0.4,
+        zcr: a.roughness || 0.3,
+        dynamicRange: Math.abs((a.peak || 0) - (a.rms || 0)),
+        spectralVariation: a.spectralFlux || 0.3,
+        bass: a.bassRatio || 0.3,
+        mid: a.midRatio || 0.4,
+        treble: a.trebleRatio || 0.3,
+        spectrumProfile: []
+      };
+    }
+
+    function renderPalette(palette) {
+      const row = document.getElementById("paletteRow");
+      if (!palette?.length) {
+        row.innerHTML = "";
+        return;
+      }
+      row.innerHTML = palette.map((c) =>
+        `<i style="background:rgb(${c.r},${c.g},${c.b})"></i>`
+      ).join("");
+    }
+
+    function applyVariant(cId, vName) {
+      catId = cId;
+      varName = vName;
+      const cat = PRESETS[cId];
+      const variant = cat.variants[vName];
+      const bp = { ...variant.brushParams };
+      const af = variant.acousticFeatures;
+      const features = acousticToLegacyFeatures(af);
+
+      // Same path as main app: SoundColorEngine + Qwen category
+      const palette = (typeof SoundColorEngine !== "undefined")
+        ? SoundColorEngine.buildFromFeatures(features, cId, af)
+        : [cat.color];
+
+      window.activeBrushParams = bp;
+      window.activeAcousticFeatures = af;
+      window.activeAudioFeatures = features;
+      window.activeVisualParams = {
+        strokePattern: variant.strokePattern,
+        palette,
+        motionSpeed: bp.movementSpeed ?? bp.motion,
+        particleDensity: bp.density ?? bp.particleDensity,
+        archetypeId: cId
+      };
+      window.activeFusedVisualParams = window.activeVisualParams;
+      window.activeVisualStructure = {
+        strokePattern: variant.strokePattern,
+        archetypeId: cId,
+        source: "qwen"
+      };
+      if (brush?.resetInkColor && palette[0]) brush.resetInkColor(palette[0]);
+      renderPalette(palette);
+
+      document.querySelectorAll(".cat-btn").forEach((b) => b.classList.toggle("active", b.dataset.id === cId));
+      document.querySelectorAll(".var-btn").forEach((b) => b.classList.toggle("active", b.dataset.name === vName));
+      const label = cat.label || cat.labelZh || cId;
+      document.getElementById("statusHint").textContent =
+        `${label} · ${variant.strokePattern} · ${vName} · same engine as main app`;
+      document.getElementById("paramMeta").textContent =
+        `acoustic rms ${pct(af.rms)} centroid ${pct(af.spectralCentroid)} rough ${pct(af.roughness)} tempo ${pct(af.tempo)} cont ${pct(af.continuity)} | ` +
+        `brush size ${pct(bp.brushSize)} dens ${pct(bp.density)} turb ${pct(bp.turbulence)} move ${pct(bp.movementSpeed)} ` +
+        `vibA ${pct(bp.vibrationAmplitude)} spawn ${pct(bp.spawnRate)} gap ${pct(bp.gapProbability)} trail ${pct(bp.trailLength)} | palette ${palette.length}`;
+    }
+
+    function catLabel(cat, id) {
+      return cat.label || cat.labelZh || id;
+    }
+
+    function buildLists() {
+      const catHost = document.getElementById("catList");
+      catHost.innerHTML = Object.entries(PRESETS).map(([id, cat]) => {
+        const pat = Object.values(cat.variants)[0].strokePattern;
+        return `<button type="button" class="cat-btn" data-id="${id}">
+          <strong>${catLabel(cat, id)}</strong>
+          <span>${id} → ${pat}</span>
+        </button>`;
+      }).join("");
+      catHost.querySelectorAll(".cat-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.id;
+          const first = Object.keys(PRESETS[id].variants)[0];
+          renderVars(id);
+          applyVariant(id, first);
+          runDemoStroke();
+        });
+      });
+      renderVars(catId);
+    }
+
+    function renderVars(cId) {
+      const host = document.getElementById("varList");
+      const vars = PRESETS[cId].variants;
+      host.innerHTML = Object.keys(vars).map((name) =>
+        `<button type="button" class="var-btn" data-name="${name}">
+          <strong>${name}</strong>
+          <span>Within-class acoustic variant</span>
+        </button>`
+      ).join("");
+      host.querySelectorAll(".var-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          applyVariant(cId, btn.dataset.name);
+          runDemoStroke();
+        });
+      });
+    }
+
+    function runDemoStroke() {
+      if (!brush || !artLayer || !persistLayer) return;
+      brush.clear();
+      artLayer.clear();
+      persistLayer.clear();
+      const w = artLayer.width || 700;
+      const h = artLayer.height || 520;
+      // Organic path similar to hand-draw in main studio
+      const pts = [];
+      for (let i = 0; i < 72; i++) {
+        const t = i / 71;
+        const wobble = Math.sin(t * Math.PI * 3.1) * 0.16 + Math.sin(t * 11) * 0.03;
+        pts.push([
+          w * (0.12 + t * 0.72 + Math.sin(t * 5) * 0.02),
+          h * (0.38 + wobble + (t - 0.5) * 0.08)
+        ]);
+      }
+      for (let i = 1; i < pts.length; i++) {
+        brush.addStroke(pts[i][0], pts[i][1], pts[i - 1][0], pts[i - 1][1], window.activeVisualParams);
+      }
+      // Commit like main app on stroke end → wispy accumulated look
+      if (brush.commitLiveTo) brush.commitLiveTo(persistLayer, artLayer);
+    }
+
+    /**
+     * Circular black stipple stamp — reference-style fingerprint for screenshots.
+     * Uses real BrushGenerator + mapper brushParams; forces dark ink for clarity.
+     */
+    function renderStampToCanvas(p, cId, vName, size) {
+      const cat = PRESETS[cId];
+      const variant = cat.variants[vName];
+      const bp = { ...variant.brushParams };
+      const ink = { r: 28, g: 28, b: 30 };
+      const vp = {
+        strokePattern: variant.strokePattern,
+        palette: [ink, { r: 55, g: 52, b: 48 }, { r: 90, g: 88, b: 82 }],
+        motionSpeed: bp.movementSpeed ?? bp.motion,
+        particleDensity: bp.density
+      };
+      const g = p.createGraphics(size, size);
+      g.pixelDensity(1);
+      g.background(232, 232, 230);
+      const stampBrush = new BrushGenerator();
+      stampBrush.persistStrokes = true;
+      stampBrush.POINT_ALPHA = 40;
+      const prevBrush = window.activeBrushParams;
+      const prevAf = window.activeAcousticFeatures;
+      window.activeBrushParams = bp;
+      window.activeAcousticFeatures = variant.acousticFeatures;
+
+      const cx = size / 2;
+      const cy = size / 2;
+      const R = size * 0.34;
+      // Spiral + orbit fill so each pattern reads as a circular “material ball”
+      let px = cx + R * 0.2;
+      let py = cy;
+      const steps = 90;
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const ang = t * Math.PI * 5.5;
+        const rad = R * (0.15 + 0.85 * t);
+        const x = cx + Math.cos(ang) * rad;
+        const y = cy + Math.sin(ang) * rad * 0.92;
+        stampBrush.addStroke(x, y, px, py, vp);
+        px = x;
+        py = y;
+      }
+      // Extra radial whiskers for flow / impact readability
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2;
+        const x0 = cx + Math.cos(a) * R * 0.2;
+        const y0 = cy + Math.sin(a) * R * 0.2;
+        const x1 = cx + Math.cos(a) * R * 0.95;
+        const y1 = cy + Math.sin(a) * R * 0.95;
+        stampBrush.addStroke(x1, y1, x0, y0, vp);
+      }
+      for (let f = 0; f < 18; f++) {
+        stampBrush.updateAndDraw(g, vp, {}, null, { trailFade: 0 });
+      }
+      // Circular mask
+      g.drawingContext.save();
+      g.drawingContext.globalCompositeOperation = "destination-in";
+      g.noStroke();
+      g.fill(255);
+      g.circle(cx, cy, size * 0.92);
+      g.drawingContext.restore();
+      // Soft ring edge
+      g.noFill();
+      g.stroke(200, 200, 198);
+      g.strokeWeight(1);
+      g.circle(cx, cy, size * 0.92);
+
+      window.activeBrushParams = prevBrush;
+      window.activeAcousticFeatures = prevAf;
+      return g;
+    }
+
+    function mountStampCell(host, title, algo, traits, graphics) {
+      const cell = document.createElement("div");
+      cell.className = "stamp-cell";
+      const cnv = document.createElement("canvas");
+      cnv.width = graphics.width;
+      cnv.height = graphics.height;
+      const ctx = cnv.getContext("2d");
+      ctx.drawImage(graphics.elt, 0, 0);
+      cell.appendChild(cnv);
+      const t = document.createElement("div");
+      t.className = "stamp-title";
+      t.textContent = title;
+      cell.appendChild(t);
+      const a = document.createElement("div");
+      a.className = "stamp-algo";
+      a.textContent = algo;
+      cell.appendChild(a);
+      const tr = document.createElement("div");
+      tr.className = "stamp-traits";
+      tr.textContent = traits;
+      cell.appendChild(tr);
+      host.appendChild(cell);
+      graphics.remove();
+    }
+
+    function renderSummaryBoard() {
+      if (!PRESETS || !p5ref) return;
+      const catHost = document.getElementById("categoryStampGrid");
+      const varHost = document.getElementById("variantStampGrid");
+      catHost.innerHTML = "";
+      varHost.innerHTML = "";
+      const size = 168;
+      // One stamp per category — first variant as “base character”
+      Object.keys(PRESETS).forEach((cId) => {
+        const cat = PRESETS[cId];
+        const vName = Object.keys(cat.variants)[0];
+        const info = CATEGORY_TRAITS[cId] || {};
+        const g = renderStampToCanvas(p5ref, cId, vName, size);
+        mountStampCell(
+          catHost,
+          catLabel(cat, cId),
+          info.algo || cat.variants[vName].strokePattern,
+          info.traits || "",
+          g
+        );
+      });
+      // All within-class variants
+      Object.keys(PRESETS).forEach((cId) => {
+        const cat = PRESETS[cId];
+        Object.keys(cat.variants).forEach((vName) => {
+          const g = renderStampToCanvas(p5ref, cId, vName, 148);
+          mountStampCell(
+            varHost,
+            `${catLabel(cat, cId)} · ${vName}`,
+            cat.variants[vName].strokePattern,
+            VARIANT_TRAITS[vName] || "Within-class acoustic difference",
+            g
+          );
+        });
+      });
+    }
+
+    const sketch = (p) => {
+      p.setup = () => {
+        p5ref = p;
+        window.noise = p.noise.bind(p);
+        window.lerp = p.lerp.bind(p);
+        window.constrain = p.constrain.bind(p);
+        window.map = p.map.bind(p);
+        window.randomGaussian = p.randomGaussian.bind(p);
+        window.TWO_PI = p.TWO_PI;
+        window.PI = p.PI;
+        // Match main app retina behavior for stroke density feel
+        p.pixelDensity(Math.min(2, window.devicePixelRatio || 1));
+        const holder = document.getElementById("previewHolder");
+        const w = Math.max(320, holder.clientWidth || 800);
+        const h = Math.max(360, holder.clientHeight || 560);
+        const cnv = p.createCanvas(w, h);
+        cnv.parent("previewHolder");
+        cnv.elt.style.touchAction = "none";
+        cnv.elt.style.cursor = "crosshair";
+        artLayer = p.createGraphics(w, h);
+        persistLayer = p.createGraphics(w, h);
+        artLayer.clear();
+        persistLayer.clear();
+
+        // Defaults identical to main BrushGenerator — no preview-only alpha hacks
+        brush = new BrushGenerator();
+        brush.persistStrokes = true;
+        window.brushGenerator = brush;
+
+        const el = cnv.elt;
+        const pos = (evt) => {
+          const r = el.getBoundingClientRect();
+          const src = evt.touches && evt.touches[0] ? evt.touches[0] : evt;
+          return {
+            x: (src.clientX - r.left) * (p.width / Math.max(1, r.width)),
+            y: (src.clientY - r.top) * (p.height / Math.max(1, r.height))
+          };
+        };
+        const start = (evt) => { evt.preventDefault(); drawing = true; prev = pos(evt); };
+        const move = (evt) => {
+          if (!drawing || !brush) return;
+          evt.preventDefault();
+          const cur = pos(evt);
+          brush.addStroke(cur.x, cur.y, prev.x, prev.y, window.activeVisualParams);
+          prev = cur;
+        };
+        const end = (evt) => {
+          if (!drawing) return;
+          evt.preventDefault();
+          if (brush?.commitLiveTo) brush.commitLiveTo(persistLayer, artLayer);
+          drawing = false;
+          prev = null;
+        };
+        el.addEventListener("pointerdown", start);
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", end);
+
+        if (PRESETS) {
+          const firstVar = Object.keys(PRESETS[catId].variants)[0];
+          applyVariant(catId, firstVar);
+          runDemoStroke();
+          setTimeout(() => renderSummaryBoard(), 80);
+        }
+      };
+
+      p.draw = () => {
+        // Same paper tone as main Visual Generation Area
+        p.background(248, 247, 244);
+        if (!brush || !artLayer) return;
+        // Default trail fade like main (persistStrokes path)
+        brush.updateAndDraw(artLayer, window.activeVisualParams, {}, null, null);
+        p.image(persistLayer, 0, 0);
+        p.image(artLayer, 0, 0);
+      };
+
+      p.windowResized = () => {
+        const holder = document.getElementById("previewHolder");
+        const w = Math.max(320, holder.clientWidth || 800);
+        const h = Math.max(360, holder.clientHeight || 560);
+        p.resizeCanvas(w, h);
+        artLayer = p.createGraphics(w, h);
+        persistLayer = p.createGraphics(w, h);
+        if (brush) brush.clear();
+      };
+    };
+
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      if (brush) brush.clear();
+      if (artLayer) artLayer.clear();
+      if (persistLayer) persistLayer.clear();
+    });
+    document.getElementById("demoBtn").addEventListener("click", () => runDemoStroke());
+    document.getElementById("renderSummaryBtn").addEventListener("click", () => renderSummaryBoard());
+
+    fetch("brush-preview-presets.json")
+      .then((r) => r.json())
+      .then((data) => {
+        PRESETS = data;
+        buildLists();
+        new p5(sketch);
+      })
+      .catch((err) => {
+        document.getElementById("statusHint").textContent = "Failed to load presets: " + err;
+      });
+  </script>
+</body>
+</html>

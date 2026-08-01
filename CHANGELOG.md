@@ -17,13 +17,23 @@ Piko 项目变更日志。**最新记录在顶部。**
 
 ---
 
-### 2026-07-16 · v1.4 — UI PRD/IA 文档 + 产品流对齐
+### 2026-07-18 · v1.5 — Qwen 定类 + 本地类内笔刷
 
 | 项 | 内容 |
 |----|------|
-| **摘要** | 新增 `UI设计PRD与信息架构.md`；README / 技术说明书对齐 Collect→Transform→Draw、Plate≤5、Qwen 灰度五类、IndexedDB |
-| **涉及文件** | `UI设计PRD与信息架构.md`、`README.md`、`技术说明书.md`、`CHANGELOG.md` |
-| **原因/备注** | 供 UI 设计直接使用；技术细节仍以说明书为准 |
+| **摘要** | Qwen 决定 `strokePattern`；本地声学只做类内 `brushParams`；分轴映射，音量不再连坐 |
+| **涉及文件** | `acoustic_features.py`、`brush_mapper.py`、`brushGenerator.js`、`BRUSH_ACOUSTIC_MAPPING.md`、`README.md`、`技术说明书.md` |
+| **原因/备注** | 同类异录要有可见差异；五套算法保留 |
+
+---
+
+### 2026-07-16 · v1.4 — 产品流文档对齐
+
+| 项 | 内容 |
+|----|------|
+| **摘要** | README / 技术说明书对齐 Collect→Transform→Draw、Plate≤5、IndexedDB（当时仍写 Qwen 不改笔刷算法） |
+| **涉及文件** | `README.md`、`技术说明书.md`、`CHANGELOG.md` |
+| **原因/备注** | UI PRD 文件后续已删除 |
 
 ---
 

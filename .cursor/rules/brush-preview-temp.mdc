@@ -1,0 +1,16 @@
+---
+description: brush-preview 随时可删的临时页，勿依赖、勿写进正式流程
+alwaysApply: true
+---
+
+# brush-preview 随时可删
+
+`web-demo/brush-preview.html`、`brush-preview-presets.json`、`brush-stamps/` 是**随时要删**的临时对照页，不是产品功能。
+
+## 必须遵守
+
+- **随时可整组删除**，无需迁移、无需兼容、无需问「要不要保留」
+- **不要**依赖它做正式功能、测试入口、启动默认页、导航链接
+- **不要**写进 README / 技术说明书 / 用户主流程 / AGENTS 以外的文档展开说明
+- 正式流程只认 `index.html` + Library / Plate
+- 用户说删 → 立刻删上述整组文件即可

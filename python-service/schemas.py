@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AudioFeatures(BaseModel):
@@ -39,6 +39,9 @@ class VisualModifiers(BaseModel):
 
 
 class BrushParams(BaseModel):
+    """Within-class brush knobs. Extra keys (brushSize, spawnRate, vibration*, …) allowed."""
+    model_config = ConfigDict(extra="allow")
+
     strokeWidth: float = 0.0
     flow: float = 0.0
     density: float = 0.0
@@ -48,6 +51,14 @@ class BrushParams(BaseModel):
     particleDensity: float = 0.0
     rotationSpeed: float = 0.0
     smoothness: float = 0.0
+    brushSize: float = 0.0
+    movementSpeed: float = 0.0
+    spawnRate: float = 0.0
+    trailLength: float = 0.0
+    gapProbability: float = 0.0
+    vibrationAmplitude: float = 0.0
+    vibrationFrequency: float = 0.0
+    vibrationRandomness: float = 0.0
     styleModifiers: dict = Field(default_factory=dict)
 
 
