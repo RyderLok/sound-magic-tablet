@@ -366,6 +366,12 @@
     if (a && a.playbackSampleId && typeof a.setPlayButtonState === 'function') {
       var playing = !!(a.playbackAudio && !a.playbackAudio.paused);
       a.setPlayButtonState(a.playbackSampleId, playing);
+      if (a.playbackAudio && typeof a._updatePlaybackTimeLabels === 'function') {
+        // 正在播 / 暂停中：显示已播时间；否则总时长已由上面 HTML 写好
+        if (playing || a.playbackAudio.paused) {
+          a._updatePlaybackTimeLabels(a.playbackSampleId, a.playbackAudio.currentTime || 0);
+        }
+      }
       if (playing && typeof a._paintPlaybackWaveforms === 'function' && a.playbackAudio) {
         var dur = a.playbackAudio.duration || 0;
         a._paintPlaybackWaveforms(a.playbackSampleId, dur > 0 ? a.playbackAudio.currentTime / dur : 0);

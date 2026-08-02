@@ -81,13 +81,18 @@
     syncPlaybackUi();
   }
 
-  /** 重绘卡片后恢复播放中按钮 / 波形进度，避免被 innerHTML 冲掉 */
+  /** 重绘卡片后恢复播放中按钮 / 波形进度 / 已播时长，避免被 innerHTML 冲掉 */
   function syncPlaybackUi() {
     var a = app();
     if (!a || !a.playbackSampleId) return;
     var playing = !!(a.playbackAudio && !a.playbackAudio.paused);
     if (typeof a.setPlayButtonState === 'function') {
       a.setPlayButtonState(a.playbackSampleId, playing);
+    }
+    if (a.playbackAudio && typeof a._updatePlaybackTimeLabels === 'function') {
+      if (playing || a.playbackAudio.paused) {
+        a._updatePlaybackTimeLabels(a.playbackSampleId, a.playbackAudio.currentTime || 0);
+      }
     }
     if (playing && typeof a._paintPlaybackWaveforms === 'function' && a.playbackAudio) {
       var dur = a.playbackAudio.duration || 0;

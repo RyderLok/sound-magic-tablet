@@ -83,7 +83,10 @@ class CanvasInteraction {
 
     if (holder) {
       const cs = window.getComputedStyle(holder);
-      if (cs.position === "static") holder.style.position = "relative";
+      // Piko 画板模式需要 absolute 贴 Figma 坐标，别写死 relative
+      if (cs.position === "static" && !this.isPikoCanvasMode()) {
+        holder.style.position = "relative";
+      }
       holder.appendChild(host);
     }
     return host;
@@ -232,7 +235,7 @@ class CanvasInteraction {
   }
 
   layout() {
-    // Figma P6：纯白全幅画布，不显示 materials 条 / 左侧球体
+    // Figma P6：圆角白画板内作画（外层深褐底由 CSS 负责）
     if (this.isPikoCanvasMode()) {
       return {
         materialsTop: 0,
@@ -268,7 +271,7 @@ class CanvasInteraction {
     this.drawPaper();
 
     if (l.pikoFull) {
-      // 全幅白底；藏左侧球体
+      // 圆角白画板内；藏左侧球体
       if (this.sphereHost) this.sphereHost.style.display = "none";
       this.drawCenterCanvas(l, visualParameters);
     } else {
@@ -325,7 +328,7 @@ class CanvasInteraction {
     const z = l.centerZone;
     noStroke();
     if (l.pikoFull) {
-      // Figma：纯白全幅，无内边框
+      // Figma：白画板内纯白底，圆角由 .canvas-holder 裁切
       fill(255, 255, 255);
       rect(0, 0, width, height);
       return;

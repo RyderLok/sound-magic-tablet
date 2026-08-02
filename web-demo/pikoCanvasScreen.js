@@ -3,6 +3,7 @@
  *
  * 不重写 p5 画布：在既有 analysisView / #canvasHolder 上套一层 Figma 顶栏，
  * 色盘槽位绑定 PlateManager，橡皮/返回接既有工具。
+ * 布局：深褐底 #413A35 + 圆角白画板 (87,157) 880×623 + 橙底色盘 pill。
  */
 (function () {
   'use strict';
@@ -56,9 +57,18 @@
 
   function activate() {
     setChromeVisible(true);
+    // sphere host 创建时可能给 holder 写了 inline position:relative，会盖掉 Figma 绝对定位
+    var holder = el('canvasHolder');
+    if (holder) {
+      holder.style.position = '';
+      holder.style.left = '';
+      holder.style.top = '';
+      holder.style.width = '';
+      holder.style.height = '';
+    }
     renderPalette();
     syncEraseState();
-    // 全幅化后让 p5 按新尺寸重算
+    // 圆角画板尺寸变化后让 p5 按新尺寸重算
     requestAnimationFrame(function () {
       if (typeof windowResized === 'function') windowResized();
     });

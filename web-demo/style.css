@@ -6,6 +6,7 @@
   --piko-yellow: #fdbf42;
   --piko-cream: #f9f8f4;
   --piko-white: #ffffff;
+  --piko-canvas-bg: #413a35;
   --piko-text: #535353;
   --piko-muted: #cacaca;
   --piko-muted-2: #9a9a9a;
@@ -401,9 +402,43 @@ button {
   86%      { transform: rotate(0.2deg) translate(0, 0); }
 }
 
+/* Gallery 画框图标 · 墙上挂画的微动效
+   画框绕上沿轻晃；框内相纸慢速漂移 + 轻微呼吸，像在看一幅画。 */
+.tile-gallery {
+  overflow: visible;
+}
+
+.tile-gallery-frame {
+  transform-box: fill-box;
+  transform-origin: 50% 8%;
+  animation: tile-gallery-sway 3400ms ease-in-out infinite;
+}
+
+.tile-gallery-photo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tile-gallery-drift 4200ms ease-in-out infinite;
+}
+
+@keyframes tile-gallery-sway {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  22%      { transform: rotate(-2.4deg) translateY(0.6px); }
+  48%      { transform: rotate(0.6deg) translateY(-0.4px); }
+  72%      { transform: rotate(2.2deg) translateY(0.5px); }
+  88%      { transform: rotate(-0.5deg) translateY(-0.2px); }
+}
+
+@keyframes tile-gallery-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.42; }
+  35%      { transform: translate(1.4px, -1.1px) scale(1.05); opacity: 0.55; }
+  68%      { transform: translate(-1.1px, 0.8px) scale(1.02); opacity: 0.48; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tile-wave-bar,
-  .tile-draw-brush { animation: none; }
+  .tile-draw-brush,
+  .tile-gallery-frame,
+  .tile-gallery-photo { animation: none; }
 }
 
 /* 磁贴标签 */
@@ -1076,7 +1111,7 @@ button {
 
 .piko-save-btn img { width: 27px; height: 27px; }
 
-/* 色盘 pill · (367,60) 456×61 */
+/* 色盘 pill · (367,60) 456×61 · Figma 橙底 */
 .piko-palette-pill {
   position: absolute;
   left: 367px;
@@ -1088,7 +1123,7 @@ button {
   gap: 18px;
   padding: 0 16px 0 16px;
   border-radius: var(--piko-radius-pill);
-  background: var(--piko-cream);
+  background: var(--piko-orange);
   box-shadow: var(--piko-shadow);
 }
 
@@ -1098,25 +1133,27 @@ button {
   height: 39px;
   padding: 0;
   border: 2px solid transparent;
-  border-radius: 12px;
+  border-radius: 20px;
   background: #ddd;
+  box-shadow: var(--piko-inset);
   cursor: pointer;
   transition: border-color 120ms ease, transform 120ms ease;
 }
 
 .piko-palette-slot.is-empty {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: none;
   cursor: default;
 }
 
 .piko-palette-slot.is-active {
-  border-color: var(--piko-orange);
+  border-color: var(--piko-white);
   transform: translateY(-1px);
 }
 
 .piko-palette-more {
   margin-left: auto;
-  color: var(--piko-muted-2);
+  color: var(--piko-white);
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 2px;
@@ -1124,12 +1161,12 @@ button {
   user-select: none;
 }
 
-/* plate 模式：藏旧顶栏/侧栏，画布铺满舞台 */
+/* plate 模式：深褐底 + 圆角白画板（Figma 1:298） */
 #analysisView.piko-canvas-mode {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--piko-white);
+  background: var(--piko-canvas-bg);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -1161,14 +1198,20 @@ button {
   padding: 0;
 }
 
+/* 白画板 · (87,157) 880×623 圆角 30 + 投影 */
 #analysisView.piko-canvas-mode .canvas-holder {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: 87px;
+  top: 157px;
+  right: auto;
+  bottom: auto;
+  width: 880px;
+  height: 623px;
   border: none;
-  border-radius: 0;
+  border-radius: 30px;
   background: var(--piko-white);
+  box-shadow: var(--piko-shadow);
+  overflow: hidden;
 }
 
 /* Piko 画板模式下藏系统状态条 */

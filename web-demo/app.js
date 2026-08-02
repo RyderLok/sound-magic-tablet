@@ -872,6 +872,41 @@ const App = {
     });
   },
 
+  /** mm:ss，含 0 → 00:00（列表时长用，不要走 formatDuration 的 --:--） */
+  _fmtClock(secs) {
+    const total = Math.max(0, Math.floor(Number(secs) || 0));
+    const m = String(Math.floor(total / 60)).padStart(2, "0");
+    const s = String(total % 60).padStart(2, "0");
+    return `${m}:${s}`;
+  },
+
+  /**
+   * 播放中：时长从 00:00 往上走；传 null 则回到该 sample 的总时长。
+   * 覆盖 brush 列表、sounds 卡片、brush 信息栏。
+   */
+  _updatePlaybackTimeLabels(sampleId, elapsedOrNull) {
+    const sample = this.soundLibrary.find((s) => s.id === sampleId);
+    const text = elapsedOrNull == null
+      ? this._fmtClock(sample?.duration)
+      : this._fmtClock(elapsedOrNull);
+
+    document.querySelectorAll(`[data-play-id="${sampleId}"]`).forEach((btn) => {
+      const row = btn.closest(".brush-row, .sound-card");
+      if (!row) return;
+      const durEl = row.querySelector(".brush-row-dur, .sound-dur");
+      if (durEl) durEl.textContent = text;
+    });
+
+    const infoDur = document.getElementById("brushInfoDur");
+    if (infoDur && window.PikoBrushScreen) {
+      // 信息栏只跟着当前选中笔刷走
+      const activeRow = document.querySelector(".brush-row.is-active [data-play-id]");
+      if (activeRow && activeRow.dataset.playId === sampleId) {
+        infoDur.textContent = text;
+      }
+    }
+  },
+
   _paintPlaybackWaveforms(sampleId, progress) {
     const sample = this.soundLibrary.find((s) => s.id === sampleId);
     if (!sample?.waveformSnapshot?.length) return;
@@ -899,8 +934,10 @@ const App = {
         return;
       }
       const dur = audio.duration;
-      const p = Number.isFinite(dur) && dur > 0 ? audio.currentTime / dur : 0;
+      const t = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+      const p = Number.isFinite(dur) && dur > 0 ? t / dur : 0;
       this._paintPlaybackWaveforms(id, p);
+      this._updatePlaybackTimeLabels(id, t);
       this._scrubRaf = requestAnimationFrame(tick);
     };
     this._scrubRaf = requestAnimationFrame(tick);
@@ -925,6 +962,7 @@ const App = {
     if (endedId) {
       this.setPlayButtonState(endedId, false);
       this._paintPlaybackWaveforms(endedId, null);
+      this._updatePlaybackTimeLabels(endedId, null);
       this.playbackSampleId = null;
     }
   },
@@ -976,11 +1014,15 @@ const App = {
       this.playbackAudio.pause();
       this._stopPlaybackScrubber();
       this.setPlayButtonState(sampleId, false);
+      // 暂停时保留已播到的时间，不跳回总时长
+      this._updatePlaybackTimeLabels(sampleId, this.playbackAudio.currentTime || 0);
       return;
     }
 
     if (this.playbackSampleId === sampleId && this.playbackAudio?.paused) {
       this._resumePlaybackAudioCtx();
+      // 从暂停点继续；若用户期望每次都从 0，在下方「新开播放」路径已保证
+      this._updatePlaybackTimeLabels(sampleId, this.playbackAudio.currentTime || 0);
       this.playbackAudio.play()
         .then(() => {
           this.setPlayButtonState(sampleId, true);
@@ -994,9 +1036,11 @@ const App = {
     this.playbackUrl = URL.createObjectURL(sample.file);
     const audio = new Audio(this.playbackUrl);
     audio.crossOrigin = "anonymous";
+    audio.currentTime = 0;
     this.playbackAudio = audio;
     this.playbackSampleId = sampleId;
     this._bindPlaybackAnalyser(audio);
+    this._updatePlaybackTimeLabels(sampleId, 0);
     audio.onended = () => this.stopPlayback();
     this._resumePlaybackAudioCtx()
       .then(() => audio.play())
