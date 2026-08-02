@@ -1,21 +1,29 @@
 /**
  * P4 · Transform（Figma 1:288）
  *
- * 只做 Figma 的加载屏外观；真正的「声音 → 笔刷」仍由既有的
- * SoundTransformView 管线跑完，本屏负责编排顺序与进度文案。
+ * 球跟着千问真实 /analyze/wav 等待凝聚；胶囊文案固定「Brush Blooming」。
+ * 节奏：慢爬进度 + 每段分析后的停顿 + 成型停留，避免「闪一下就过」。
  */
 (function () {
   'use strict';
 
-  var MIN_SHOW_MS = 2600; // shader 球至少完整凝聚一轮，别让等待变闪屏
-
   var running = false;
   var orb = null;
+  var thinkTimer = null;
+  var PILL = 'Brush Blooming';
+
+  // 进度时间常数（秒）：越大爬得越慢。千问常见 8–20s，用 16 让中段仍在凝聚
+  var THINK_TAU_MS = 16000;
+  // 单段分析若异常快结束（失败/缓存），至少撑住这段，避免闪屏
+  var MIN_SAMPLE_MS = 3200;
+  // 一段完成后的呼吸停顿
+  var BETWEEN_MS = 900;
+  // 全部完成后的绽放停留
+  var BLOOM_HOLD_MS = 1800;
 
   function el(id) { return document.getElementById(id); }
   function app() { return window.App || null; }
 
-  /** shader 球：WebGL 不可用时静默回退到 Figma 的 PNG */
   function ensureOrb() {
     if (orb) return orb;
     var host = el('magicOrbWrap');
@@ -27,7 +35,9 @@
 
   function pillText(text) {
     var node = el('magicPillText');
-    if (node) node.textContent = text;
+    if (!node) return;
+    if (node.textContent === text) return;
+    node.textContent = text;
   }
 
   function pendingSamples() {
@@ -36,22 +46,40 @@
     return window.PlateManager.getSelectedSamples(a) || [];
   }
 
-  function needsTransform(sample) {
-    return !(sample && sample.status === 'analyzed' && sample.features && sample.visualParams);
-  }
-
   function delay(ms) {
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  /** 千问思考期间：进度渐近逼近 ceiling，永不提前封顶 */
+  function startThinkingProgress(view, from, ceiling) {
+    stopThinkingProgress();
+    if (!view) return;
+    var t0 = Date.now();
+    thinkTimer = setInterval(function () {
+      var t = (Date.now() - t0) / THINK_TAU_MS;
+      var p = from + (ceiling - from) * (1 - Math.exp(-t));
+      view.setProgress(p);
+    }, 100);
+  }
+
+  function stopThinkingProgress(view, finalP) {
+    if (thinkTimer) {
+      clearInterval(thinkTimer);
+      thinkTimer = null;
+    }
+    if (view && finalP != null) view.setProgress(finalP);
   }
 
   async function run() {
     if (running) return;
     running = true;
 
-    var startedAt = Date.now();
     var a = app();
     var list = pendingSamples();
-    var todo = list.filter(needsTransform);
+    var todo = list.filter(Boolean);
+    var total = Math.max(todo.length, 1);
+
+    pillText(PILL);
 
     var view = ensureOrb();
     if (view) {
@@ -60,68 +88,106 @@
       view.start();
     }
 
-    // 已分析过的直接进成型态，否则从「声音云」开始凝聚
-    var total = todo.length;
-    if (view && total === 0) view.setProgress(1);
+    if (!todo.length) {
+      if (view) {
+        view.setProgress(1);
+        view.bloom();
+        await delay(BLOOM_HOLD_MS);
+      }
+      running = false;
+      if (window.PikoRouter && window.PikoRouter.current === 'magic') {
+        window.PikoRouter.show('brush');
+      }
+      return;
+    }
 
     try {
-      for (var i = 0; i < total; i++) {
-        pillText('Brush Blooming ' + (i + 1) + '/' + total);
+      for (var i = 0; i < todo.length; i++) {
+        var sample = todo[i];
+        var base = i / total;
+        // 留给「快结束」的余量小一点，长时间思考时球一直在后半段慢慢涨
+        var ceiling = (i + 0.88) / total;
+        var doneAt = (i + 1) / total;
+        var sampleStarted = Date.now();
+
         if (view) {
-          view.setSample(todo[i]);
-          view.setProgress((i + 0.15) / total);
+          view.setSample(sample);
+          view.setProgress(base + 0.015);
         }
-        if (a && a.transformView && typeof a.transformView.start === 'function') {
-          await a.transformView.start(todo[i]);
+
+        var tv = a && a.transformView;
+        if (!tv || typeof tv.runHeadless !== 'function') {
+          throw new Error('transformView.runHeadless missing');
         }
-        // 分析回填了 visualParams，用真实调色板再刷一次球
-        if (view) {
-          view.setSample(todo[i]);
-          view.setProgress((i + 1) / total);
+
+        startThinkingProgress(view, base + 0.04, ceiling);
+        var result = await tv.runHeadless(sample, {
+          onPhase: function (phase, detail) {
+            if (phase === 'done' || phase === 'mapping') {
+              var sem = detail && detail.semantic;
+              var err = detail && detail.semanticError;
+              if (sem) {
+                console.info(
+                  '[PikoMagic] Qwen',
+                  (sem.archetypeLabelZh || sem.soundLabel || sem.archetype),
+                  'conf=',
+                  sem.confidence
+                );
+              } else if (err) {
+                console.warn('[PikoMagic] Qwen failed:', err.code || err.message || err);
+              }
+            }
+          }
+        });
+        stopThinkingProgress(view, doneAt);
+        if (view) view.setSample(sample);
+
+        var elapsed = Date.now() - sampleStarted;
+        if (elapsed < MIN_SAMPLE_MS) {
+          await delay(MIN_SAMPLE_MS - elapsed);
         }
+        if (i < todo.length - 1) await delay(BETWEEN_MS);
+
+        void result;
       }
-      pillText('Brush Blooming');
+
+      stopThinkingProgress(view, 1);
+      if (view) {
+        view.setProgress(1);
+        view.bloom();
+        await delay(BLOOM_HOLD_MS);
+      }
     } catch (err) {
-      console.error('[Piko] transform pipeline failed:', err);
+      console.error('[Piko] magic/qwen pipeline failed:', err);
+      stopThinkingProgress();
       pillText('Something went wrong');
       running = false;
       if (view) view.stop();
       return;
     }
 
-    var elapsed = Date.now() - startedAt;
-    if (elapsed < MIN_SHOW_MS) await delay(MIN_SHOW_MS - elapsed);
-
-    // 成型：柔和绽放再进 Sound Brush。
-    // 这里不能 stop()——离场还有几百毫秒，停了球会僵住，看起来像「流着流着突然卡住」。
-    // 收尾交给 piko:screen 的延迟停止；bloom 衰减也放慢，避免爆发后立刻发呆。
-    if (view) {
-      view.setProgress(1);
-      view.bloom();
-      await delay(720);
-    }
-
     running = false;
-    // 用户可能在管线跑完前就退了；别把人从别的屏拽回来
     if (window.PikoRouter && window.PikoRouter.current === 'magic') {
       window.PikoRouter.show('brush');
     }
   }
 
-  /** 让球继续动完整个离场动画再收，避免切屏时画面僵住 */
   var stopTimer = null;
   function stopOrbAfterTransition() {
     if (!orb) return;
     clearTimeout(stopTimer);
     stopTimer = setTimeout(function () {
       if (orb && window.PikoRouter && window.PikoRouter.current !== 'magic') orb.stop();
-    }, 640);
+    }, 720);
   }
 
   function bind() {
     var back = el('magicBackBtn');
     if (back) {
       back.addEventListener('click', function () {
+        var a = app();
+        if (a && a.transformView) a.transformView.running = false;
+        stopThinkingProgress();
         if (window.PikoRouter) window.PikoRouter.show('sounds');
       });
     }
@@ -130,9 +196,10 @@
       if (!event.detail) return;
       if (event.detail.screen === 'magic') {
         clearTimeout(stopTimer);
-        pillText('Brush Blooming');
+        pillText(PILL);
         run();
       } else {
+        stopThinkingProgress();
         stopOrbAfterTransition();
       }
     });

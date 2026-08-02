@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Piko</title>
-  <link rel="stylesheet" href="style.css?v=piko28" />
+  <link rel="stylesheet" href="style.css?v=piko37" />
 </head>
 <body>
 
@@ -107,7 +107,9 @@
     </button>
 
     <h1 class="piko-title">Transform</h1>
-    <p class="magic-lead">A little sound magic is happening...</p>
+    <p class="magic-lead" aria-label="A little sound magic is happening">
+      A little sound magic is happening<span class="magic-lead-dots" aria-hidden="true"><span>.</span><span class="magic-dot-2">.</span><span class="magic-dot-3">.</span></span>
+    </p>
 
     <div class="magic-orb-wrap" id="magicOrbWrap">
       <img class="magic-orb-glow" src="piko-assets/orb-glow.svg" alt="" aria-hidden="true" />
@@ -147,195 +149,37 @@
   </div>
 
   <!-- ================================================================
-       P7 · MY GALLERY — 作品图库占位（保存/打印功能后续接入）
+       P7 · MY GALLERY — 已保存画纸作品
   ================================================================ -->
   <div id="galleryView" class="view piko-screen piko-gallery hidden">
     <button type="button" id="galleryBackBtn" class="piko-round-btn piko-back-btn" title="返回">
       <img src="piko-assets/icon-chevron-left.svg" alt="返回" />
     </button>
-    <button type="button" id="galleryMenuBtn" class="piko-round-btn piko-gallery-menu-btn" title="菜单" aria-label="菜单">
+    <button type="button" id="galleryMenuBtn" class="piko-round-btn piko-gallery-menu-btn" title="多选" aria-label="多选" aria-pressed="false">
       <img src="piko-assets/icon-checklist.svg" alt="" aria-hidden="true" />
     </button>
 
     <h1 class="piko-title">My Gallery</h1>
+    <div id="gallerySelectBar" class="gallery-select-bar hidden" aria-live="polite">
+      <span id="gallerySelectCount" class="gallery-select-count">0 selected</span>
+      <button type="button" id="galleryDeleteBtn" class="gallery-delete-btn">删除</button>
+    </div>
     <div id="galleryGrid" class="gallery-grid"></div>
   </div>
 
-  <!-- ================================================================
-       LIBRARY VIEW — default page
-  ================================================================ -->
-  <div id="libraryView" class="view hidden">
+  <!-- Transform pipeline：无界面，仅保留 SoundTransformView 所需挂点 -->
+  <div id="transformView" class="view hidden" aria-hidden="true">
+    <span id="transformSampleName"></span>
+    <span id="transformMeta"></span>
+    <div id="transformStepIndicator"></div>
+    <div id="transformMain"></div>
+    <ol id="transformLogList"></ol>
+    <p id="transformFooterHint"></p>
+    <button id="transformContinueBtn" type="button" disabled hidden></button>
+  </div>
 
-    <header class="lib-header">
-      <div class="lib-header-left">
-        <h1 class="lib-title">Piko</h1>
-        <p class="lib-subtitle">Discover a sound · Record it · Watch it become living material · Draw with it</p>
-      </div>
-      <div class="workflow-steps">
-        <span class="wf-step wf-active">① Collect</span>
-        <span class="wf-arrow">→</span>
-        <span class="wf-step">② Transform</span>
-        <span class="wf-arrow">→</span>
-        <span class="wf-step">③ Draw</span>
-      </div>
-    </header>
-
-    <main class="lib-main">
-
-      <!-- Field recorder — primary flow -->
-      <div id="recordZone" class="record-zone">
-        <p id="recordHint" class="record-hint">收音仅走 ESP32 + INMP441：开始录音 → 停止（最长 20s）→ 命名 → 保存（不用电脑麦克风）。</p>
-
-        <div id="esp32LiveMonitor" class="esp32-live-monitor" aria-live="polite">
-          <span id="esp32LiveLabel" class="esp32-live-label">ESP32 · Arduino 等待数据…</span>
-          <canvas id="esp32LiveWave" class="esp32-live-wave" width="300" height="44" aria-hidden="true"></canvas>
-        </div>
-
-        <div id="recordIdlePanel" class="record-panel">
-          <div class="record-icon-wrap" aria-hidden="true">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" y1="19" x2="12" y2="22"/>
-            </svg>
-          </div>
-          <p class="record-title">Found a sound?</p>
-          <button id="recordStartBtn" type="button" class="record-start-btn">Start recording</button>
-        </div>
-
-        <div id="recordActivePanel" class="record-panel hidden">
-          <p class="record-live-label">Recording…</p>
-          <canvas id="recordMeterCanvas" class="record-meter" width="320" height="48"></canvas>
-          <p id="recordTimer" class="record-timer">0.0 / 20s</p>
-          <p id="recordPointCount" class="record-point-count">INMP441 PCM：0 KB</p>
-          <button id="recordStopBtn" type="button" class="record-stop-btn">Stop</button>
-        </div>
-
-        <div id="recordSavePanel" class="record-panel hidden">
-          <button id="recordPreviewBtn" type="button" class="record-play-btn" title="试听录音" aria-label="Play preview">
-            <svg class="icon-play" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-              <path fill="currentColor" d="M8 5v14l11-7z"/>
-            </svg>
-            <svg class="icon-pause hidden" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-              <path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-            </svg>
-          </button>
-          <p class="record-save-label">Recording ready</p>
-          <p id="recordSaveSummary" class="record-save-summary"></p>
-          <label class="record-name-label" for="recordNameInput">Name this sound</label>
-          <input id="recordNameInput" class="record-name-input" type="text" maxlength="64" placeholder="e.g. river, bird, footsteps" />
-          <div class="record-save-actions">
-            <button id="recordSaveBtn" type="button" class="record-save-btn">Save to library</button>
-            <button id="recordDiscardBtn" type="button" class="record-discard-btn">Discard</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 临时：本地上传音频 -->
-      <div class="import-toggle-wrap">
-        <button id="openUploadModalBtn" type="button" class="import-toggle">临时：上传本地音频文件</button>
-      </div>
-
-      <!-- Python 声音 → 视觉结构 -->
-      <section class="integration-panel" id="integrationPanel" aria-live="polite">
-        <div class="integration-panel-head">
-          <h2 class="integration-panel-title">Python · 声音 → 视觉结构</h2>
-          <button id="integRefreshBtn" type="button" class="integ-refresh-btn">刷新状态</button>
-        </div>
-        <p class="integration-panel-desc">
-          WAV → Python（<code>localhost:8001</code>）→ 波形 · 频谱 · 声谱图 → 特征 → p5.js Brush 视效
-        </p>
-        <div class="integration-status-row">
-          <span id="integPythonPill" class="integ-pill" data-state="offline">Python · 检测中…</span>
-          <span id="integBridgePill" class="integ-pill" data-state="disconnected">ESP32 桥接 · 检测中…</span>
-        </div>
-        <p id="integHint" class="integ-hint">正在检测服务…</p>
-        <ol id="integSetupList" class="integ-setup-list hidden"></ol>
-      </section>
-
-      <!-- Paint plate — collect brushes (max 5) -->
-      <section class="plate-panel" id="platePanel">
-        <div class="plate-panel-head">
-          <h2 class="plate-panel-title">色盘画板 · Paint Plate</h2>
-          <span id="plateCountLabel" class="plate-count-label">0 / 5 brush</span>
-        </div>
-        <p class="plate-panel-desc">
-          点击下方录音卡片<strong>选择加入画板</strong>（最多 5 段）。完成 Transform 或「分析→应用 Brush」后即可进入色盘绘画。
-        </p>
-        <div id="platePickerGrid" class="plate-picker-grid" role="listbox" aria-label="选择画板录音"></div>
-        <p class="plate-picker-label">已选 brush：</p>
-        <div id="plateBrushChips" class="plate-brush-chips"></div>
-        <div class="plate-panel-actions">
-          <button id="openPlateStudioBtn" type="button" class="plate-open-btn" disabled>进入色盘画板 →</button>
-          <button id="clearPlateBtn" type="button" class="plate-clear-btn">清空选择</button>
-        </div>
-        <p id="plateHint" class="plate-hint"></p>
-      </section>
-
-      <!-- Sound library -->
-      <section class="lib-section">
-        <div class="lib-section-header">
-          <h2 class="lib-section-title">Sound Library <span id="libraryCount" class="lib-count"></span></h2>
-        </div>
-        <div id="libraryCards" class="lib-cards"></div>
-      </section>
-
-    </main>
-  </div><!-- /libraryView -->
-
-
-  <!-- ================================================================
-       TRANSFORM VIEW — transparent sound → visual pipeline
-  ================================================================ -->
-  <div id="transformView" class="view hidden">
-
-    <header class="transform-header">
-      <button id="transformBackBtn" class="back-btn" type="button">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
-        Library
-      </button>
-      <div class="analysis-title-block">
-        <h2 id="transformSampleName" class="analysis-sample-name">—</h2>
-        <span id="transformMeta" class="analysis-meta"></span>
-      </div>
-      <div class="transform-step-indicator" id="transformStepIndicator">
-        <span class="ts-step ts-active" data-step="0">Acoustic</span>
-        <span class="ts-arrow">→</span>
-        <span class="ts-step" data-step="1">Extract</span>
-        <span class="ts-arrow">→</span>
-        <span class="ts-step" data-step="2">Map</span>
-        <span class="ts-arrow">→</span>
-        <span class="ts-step" data-step="3">Materialize</span>
-      </div>
-    </header>
-
-    <div class="transform-shell">
-      <main class="transform-main" id="transformMain">
-        <!-- filled by soundTransformView.js -->
-      </main>
-      <aside class="transform-log" id="transformLog">
-        <p class="transform-log-title">Process log</p>
-        <ol class="transform-log-list" id="transformLogList"></ol>
-      </aside>
-    </div>
-
-    <footer class="transform-footer">
-      <p class="transform-footer-hint" id="transformFooterHint">Listening to your sound…</p>
-      <button id="transformContinueBtn" class="transform-continue-btn" type="button" disabled>
-        Enter Visual Studio →
-      </button>
-    </footer>
-  </div><!-- /transformView -->
-
-
-  <!-- ================================================================
-       ANALYSIS VIEW — revealed after selecting a sample
-  ================================================================ -->
+  <!-- ANALYSIS / Canvas（Figma 1:298） -->
   <div id="analysisView" class="view hidden">
-
-    <!-- Piko Canvas 顶栏（Figma 1:298）—— plate 模式下显示 -->
     <div id="pikoCanvasChrome" class="piko-canvas-chrome hidden">
       <button type="button" id="pikoCanvasBackBtn" class="piko-round-btn piko-back-btn" title="返回">
         <img src="piko-assets/icon-chevron-left.svg" alt="返回" />
@@ -344,44 +188,14 @@
         <img src="piko-assets/icon-eraser.svg" alt="橡皮" />
       </button>
       <div id="pikoPalettePill" class="piko-palette-pill" role="listbox" aria-label="Brush palette"></div>
-      <button type="button" id="pikoCanvasSaveBtn" class="piko-round-btn piko-save-btn" title="保存（图库占位）">
+      <button type="button" id="pikoCanvasSaveBtn" class="piko-round-btn piko-save-btn" title="保存到 My Gallery">
         <img src="piko-assets/icon-save.svg" alt="保存" />
       </button>
     </div>
-
-    <header class="analysis-header">
-      <button id="backBtn" class="back-btn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
-        Library
-      </button>
-      <div class="analysis-title-block">
-        <h2 id="analysisSampleName" class="analysis-sample-name">—</h2>
-        <span id="analysisMeta" class="analysis-meta"></span>
-      </div>
-      <button id="clearCanvasBtn" class="clear-canvas-btn" type="button">Clear drawing</button>
-      <div class="canvas-tool-group" role="group" aria-label="Canvas tools">
-        <button id="canvasToolDrawBtn" type="button" class="canvas-tool-btn is-active" title="绘画 (D)">画笔</button>
-        <button id="canvasToolEraseBtn" type="button" class="canvas-tool-btn" title="气息擦除 (E)">气息擦除</button>
-      </div>
-    </header>
-
-    <div id="plateBrushStrip" class="plate-brush-strip hidden" aria-label="Plate brushes"></div>
-
     <div class="analysis-shell">
-
-      <!-- Dominant: Visual Generation Area -->
       <div class="visual-generation-column">
-        <p class="vg-label">Visual Generation Area</p>
         <div id="canvasHolder" class="canvas-holder"></div>
       </div>
-
-      <!-- Right: AI Interpretation Panel -->
-      <aside id="interpretationPanel" class="interpretation-panel">
-        <!-- Filled dynamically by app.js -->
-      </aside>
-
     </div>
   </div><!-- /analysisView -->
 
@@ -479,6 +293,7 @@
   <script src="esp32Metrics.js"></script>
   <script src="featureSchema.js"></script>
   <script src="sampleLibraryStore.js"></script>
+  <script src="galleryStore.js?v=1"></script>
   <script src="plateManager.js"></script>
   <script src="brushSchema.js"></script>
   <script src="visualParamFusion.js"></script>
@@ -499,18 +314,19 @@
   <script src="featureDebug.js"></script>
   <script src="membraneSphere.js"></script>
   <script src="sampleAnalyzer.js"></script>
-  <script src="soundTransformView.js"></script>
+  <script src="soundTransformView.js?v=2"></script>
   <script src="brushGenerator.js"></script>
-  <script src="canvasInteraction.js?v=piko4"></script>
-  <script src="app.js?v=5"></script>
+  <script src="canvasInteraction.js?v=piko7"></script>
+  <script src="app.js?v=6"></script>
   <script src="sketch.js"></script>
   <!-- Piko 新界面：屏幕脚本 + 路由（路由放最后，接管初始显示哪一屏） -->
   <script src="pikoSoundsScreen.js?v=3"></script>
-  <script src="pikoOrb.js?v=16"></script>
-  <script src="pikoMagicScreen.js?v=5"></script>
+  <script src="pikoOrb.js?v=32"></script>
+  <script src="pikoMagicScreen.js?v=9"></script>
   <script src="pikoBrushScreen.js?v=6"></script>
-  <script src="pikoCanvasScreen.js?v=3"></script>
+  <script src="pikoCanvasScreen.js?v=8"></script>
+  <script src="pikoGalleryScreen.js?v=3"></script>
   <script src="pikoCollectCarousel.js?v=12"></script>
-  <script src="pikoRouter.js?v=3"></script>
+  <script src="pikoRouter.js?v=5"></script>
 </body>
 </html>

@@ -22,7 +22,24 @@ class CanvasInteraction {
     this.lastMouse = { x: 0, y: 0 };
     this._pressStartedOnUi = false;
     this._pointerOverUi = false;
+    // Figma 1:298 白纸默认：Rectangle 136 @ (87,157) 880×623 rx30
+    this.paperRest = { x: 87, y: 157, w: 880, h: 623 };
+    this.paper = {
+      x: 87,
+      y: 157,
+      scale: 1,
+      w: 880,
+      h: 623,
+      minScale: 0.35,
+      maxScale: 4.5
+    };
+    this._pointers = new Map();
+    this._pinch = null;
+    this._navActive = false;
+    this._spaceDown = false;
+    this._panDrag = null;
     this._installUiGuard();
+    this._installPaperNav();
     this.clear();
   }
 
@@ -50,6 +67,225 @@ class CanvasInteraction {
   /** 指针压在 UI 上、或拖到 UI 上方时不落笔 */
   isPointerOnUi() {
     return this._pressStartedOnUi || this._pointerOverUi;
+  }
+
+  /** 双指 / 空格拖 / 中键拖 导航中：禁止落笔 */
+  isNavigating() {
+    return this._navActive || this._pointers.size >= 2 || !!this._panDrag;
+  }
+
+  // —— Procreate 式白纸：棕底只是桌面，transform 只动白纸 ——
+  _installPaperNav() {
+    const isUi = (node) =>
+      !!(node && node.closest && node.closest(".piko-canvas-chrome, .piko-ui-layer"));
+
+    const onDown = (e) => {
+      if (!this.isPikoCanvasMode()) return;
+      if (isUi(e.target)) return;
+
+      this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // 中键 / 空格+左键：桌面拖移白纸
+      if (e.button === 1 || (e.button === 0 && this._spaceDown)) {
+        e.preventDefault();
+        this._beginNav();
+        this._panDrag = {
+          id: e.pointerId,
+          last: this._clientToStage(e.clientX, e.clientY)
+        };
+        return;
+      }
+
+      if (this._pointers.size >= 2) {
+        e.preventDefault();
+        this._beginNav();
+        this._strokeActive = false;
+        this._pinch = this._pinchState();
+      }
+    };
+
+    const onMove = (e) => {
+      if (!this.isPikoCanvasMode()) return;
+      if (!this._pointers.has(e.pointerId)) return;
+      this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (this._panDrag && this._panDrag.id === e.pointerId) {
+        e.preventDefault();
+        const cur = this._clientToStage(e.clientX, e.clientY);
+        this.paper.x += cur.x - this._panDrag.last.x;
+        this.paper.y += cur.y - this._panDrag.last.y;
+        this._panDrag.last = cur;
+        this._clampPaper();
+        this._applyPaperTransform();
+        return;
+      }
+
+      if (this._pointers.size >= 2) {
+        e.preventDefault();
+        this._beginNav();
+        const next = this._pinchState();
+        if (this._pinch && next) {
+          const factor = next.dist / Math.max(1e-3, this._pinch.dist);
+          this._scaleAt(next.cx, next.cy, factor);
+          this.paper.x += next.cx - this._pinch.cx;
+          this.paper.y += next.cy - this._pinch.cy;
+          this._clampPaper();
+          this._applyPaperTransform();
+          this._pinch = next;
+        } else {
+          this._pinch = next;
+        }
+      }
+    };
+
+    const onUp = (e) => {
+      this._pointers.delete(e.pointerId);
+      if (this._panDrag && this._panDrag.id === e.pointerId) {
+        this._panDrag = null;
+      }
+      if (this._pointers.size < 2) this._pinch = null;
+      if (this._pointers.size === 0 && !this._panDrag) {
+        this._navActive = false;
+      }
+      if (this._pointers.size === 1) {
+        // 双指收成单指：重新取 pinch 基准，避免跳变
+        this._pinch = null;
+      }
+    };
+
+    const onWheel = (e) => {
+      if (!this.isPikoCanvasMode()) return;
+      if (isUi(e.target)) return;
+      e.preventDefault();
+      const stage = this._clientToStage(e.clientX, e.clientY);
+      const direction = e.deltaY < 0 ? 1 : -1;
+      // 触控板/滚轮：平滑一点
+      const factor = Math.exp(direction * Math.min(0.18, Math.abs(e.deltaY) * 0.0018));
+      this._scaleAt(stage.x, stage.y, factor);
+      this._clampPaper();
+      this._applyPaperTransform();
+    };
+
+    const onKeyDown = (e) => {
+      if (e.code === "Space" && this.isPikoCanvasMode()) {
+        this._spaceDown = true;
+        // 避免空格滚动页面 / 点到按钮
+        if (e.target === document.body || e.target === document.documentElement ||
+            (e.target && e.target.closest && e.target.closest("#analysisView"))) {
+          e.preventDefault();
+        }
+      }
+    };
+    const onKeyUp = (e) => {
+      if (e.code === "Space") {
+        this._spaceDown = false;
+        if (this._panDrag) this._panDrag = null;
+      }
+    };
+
+    // 绑在 document 上：捏合时第二指常落在纸外棕底
+    document.addEventListener("pointerdown", onDown, { capture: true, passive: false });
+    document.addEventListener("pointermove", onMove, { capture: true, passive: false });
+    document.addEventListener("pointerup", onUp, true);
+    document.addEventListener("pointercancel", onUp, true);
+    document.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+  }
+
+  _beginNav() {
+    if (this._strokeActive) this.commitStroke();
+    this._navActive = true;
+  }
+
+  _clientToStage(clientX, clientY) {
+    const stage = document.getElementById("pikoStage");
+    if (!stage) return { x: clientX, y: clientY };
+    const rect = stage.getBoundingClientRect();
+    const designW = 1055;
+    const scale = rect.width / designW;
+    return {
+      x: (clientX - rect.left) / scale,
+      y: (clientY - rect.top) / scale
+    };
+  }
+
+  _pinchState() {
+    if (this._pointers.size < 2) return null;
+    const pts = Array.from(this._pointers.values());
+    const a = this._clientToStage(pts[0].x, pts[0].y);
+    const b = this._clientToStage(pts[1].x, pts[1].y);
+    const cx = (a.x + b.x) * 0.5;
+    const cy = (a.y + b.y) * 0.5;
+    const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { cx, cy, dist };
+  }
+
+  _scaleAt(mx, my, factor) {
+    const p = this.paper;
+    const next = Math.min(p.maxScale, Math.max(p.minScale, p.scale * factor));
+    const ratio = next / p.scale;
+    // 保持 (mx,my) 下的纸面点不动
+    p.x = mx - (mx - p.x) * ratio;
+    p.y = my - (my - p.y) * ratio;
+    p.scale = next;
+  }
+
+  _clampPaper() {
+    const p = this.paper;
+    const stageW = 1055;
+    const stageH = 834;
+    const deskTop = 130;
+    const margin = 72;
+    const pw = p.w * p.scale;
+    const ph = p.h * p.scale;
+    p.x = Math.min(stageW - margin, Math.max(margin - pw, p.x));
+    p.y = Math.min(stageH - margin, Math.max(deskTop + margin - ph, p.y));
+  }
+
+  resetPaperTransform() {
+    const rest = this.paperRest || { x: 87, y: 157, w: 880, h: 623 };
+    this.paper.x = rest.x;
+    this.paper.y = rest.y;
+    this.paper.w = rest.w;
+    this.paper.h = rest.h;
+    this.paper.scale = 1;
+    this._navActive = false;
+    this._pinch = null;
+    this._panDrag = null;
+    this._pointers.clear();
+    this._applyPaperTransform();
+  }
+
+  _applyPaperTransform() {
+    const holder = document.getElementById("canvasHolder");
+    if (!holder || !this.isPikoCanvasMode()) return;
+    const rest = this.paperRest || { x: 87, y: 157 };
+    const p = this.paper;
+    // 默认位由 CSS 写死 Figma 坐标；JS 只叠加相对偏移，避免未跑 JS 时纸贴在 (0,0)
+    holder.style.left = rest.x + "px";
+    holder.style.top = rest.y + "px";
+    holder.style.width = (p.w || rest.w || 880) + "px";
+    holder.style.height = (p.h || rest.h || 623) + "px";
+    holder.style.transformOrigin = "0 0";
+    const dx = p.x - rest.x;
+    const dy = p.y - rest.y;
+    if (Math.abs(dx) < 0.05 && Math.abs(dy) < 0.05 && Math.abs(p.scale - 1) < 0.001) {
+      holder.style.transform = "";
+    } else {
+      holder.style.transform = `translate(${dx}px, ${dy}px) scale(${p.scale})`;
+    }
+  }
+
+  clearPaperTransformStyle() {
+    const holder = document.getElementById("canvasHolder");
+    if (!holder) return;
+    holder.style.transform = "";
+    holder.style.transformOrigin = "";
+    holder.style.left = "";
+    holder.style.top = "";
+    holder.style.width = "";
+    holder.style.height = "";
   }
 
   // DOM overlay that hosts the Three.js sphere directly over the left zone.
@@ -288,7 +524,7 @@ class CanvasInteraction {
       this.drawZoneHints(l);
     }
 
-    if (mouseIsPressed && this.isMouseInside() && !this.isPointerOnUi()) {
+    if (mouseIsPressed && this.isMouseInside() && !this.isPointerOnUi() && !this.isNavigating()) {
       const inCenter = this._isInCenterZone(l, mouseX, mouseY);
       if (inCenter) {
         if (this.canvasTool === "erase") {
@@ -306,7 +542,9 @@ class CanvasInteraction {
         }
       }
     }
-    this.lastMouse = { x: mouseX, y: mouseY };
+    if (!this.isNavigating()) {
+      this.lastMouse = { x: mouseX, y: mouseY };
+    }
 
     this.brushGenerator.updateAudioFeatures(visualParameters, personalityVector, aiResult);
     if (this.canvasTool === "draw") {
@@ -456,6 +694,50 @@ class CanvasInteraction {
 
   isMouseInside() {
     return mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height;
+  }
+
+  /**
+   * 导出当前白纸为 PNG Blob（白底 + 持久层 + 未提交笔迹）。
+   * 供保存到 My Gallery 使用。
+   */
+  exportArtworkPng() {
+    const w = Math.max(1, Math.round(this.paper?.w || width || 880));
+    const h = Math.max(1, Math.round(this.paper?.h || height || 623));
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext("2d");
+    if (!ctx) return Promise.resolve(null);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+
+    const drawLayer = (g) => {
+      if (!g) return;
+      const src = g.elt || g.canvas || g;
+      if (!src || typeof src.width !== "number") return;
+      try {
+        ctx.drawImage(src, 0, 0, w, h);
+      } catch (err) {
+        console.warn("[CanvasInteraction] export layer failed:", err);
+      }
+    };
+
+    // 若有未提交的 live 笔迹，先合进去再导出
+    if (this._strokeActive && this.canvasTool === "draw") {
+      try { this.commitStroke(); } catch (e) { /* noop */ }
+    }
+
+    drawLayer(this.persistentLayer);
+    drawLayer(this.artLayer);
+
+    return new Promise((resolve) => {
+      if (out.toBlob) {
+        out.toBlob((blob) => resolve(blob || null), "image/png");
+      } else {
+        resolve(null);
+      }
+    });
   }
 }
 

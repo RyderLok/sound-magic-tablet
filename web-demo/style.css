@@ -773,6 +773,31 @@ button {
   text-align: center;
 }
 
+.magic-lead-dots {
+  display: inline-block;
+  width: 0.72em;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.magic-lead-dots .magic-dot-2 {
+  animation: magic-dot-2-cycle 1.2s steps(1, end) infinite;
+}
+
+.magic-lead-dots .magic-dot-3 {
+  animation: magic-dot-3-cycle 1.2s steps(1, end) infinite;
+}
+
+@keyframes magic-dot-2-cycle {
+  0%, 32% { opacity: 0; }
+  33%, 100% { opacity: 1; }
+}
+
+@keyframes magic-dot-3-cycle {
+  0%, 65% { opacity: 0; }
+  66%, 100% { opacity: 1; }
+}
+
 /* 魔法球 · 光晕 (343,225) 369；球体 (394,265) 285×288 blur(2px) */
 .magic-orb-wrap {
   position: absolute;
@@ -841,6 +866,14 @@ button {
   color: var(--piko-orange);
   font-size: 28px;
   font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+#magicPillText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
 }
 
 .magic-pill-star {
@@ -1161,45 +1194,42 @@ button {
   user-select: none;
 }
 
-/* plate 模式：深褐底 + 圆角白画板（Figma 1:298） */
-#analysisView.piko-canvas-mode {
+/* analysisView = 仅 Figma 画板；旧顶栏/侧栏/库页永久不展示（DOM 留给 analysis 逻辑） */
+#analysisView {
   position: absolute;
   inset: 0;
   overflow: hidden;
   background: var(--piko-canvas-bg);
   -webkit-user-select: none;
   user-select: none;
+  touch-action: none;
 }
 
-#analysisView.piko-canvas-mode .piko-canvas-chrome { display: block; }
+#analysisView .piko-canvas-chrome { display: block; }
 
-#analysisView.piko-canvas-mode .analysis-header,
-#analysisView.piko-canvas-mode .interpretation-panel,
-#analysisView.piko-canvas-mode .vg-label,
-#analysisView.piko-canvas-mode #plateBrushStrip {
-  display: none !important;
-}
-
-#analysisView.piko-canvas-mode .analysis-shell {
+#analysisView .analysis-shell {
   display: block;
   position: absolute;
   inset: 0;
   margin: 0;
   padding: 0;
   height: 100%;
+  touch-action: none;
 }
 
-#analysisView.piko-canvas-mode .visual-generation-column {
+#analysisView .visual-generation-column {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   margin: 0;
   padding: 0;
+  pointer-events: none; /* 棕桌面不接笔；白纸自己接 */
 }
 
-/* 白画板 · (87,157) 880×623 圆角 30 + 投影 */
-#analysisView.piko-canvas-mode .canvas-holder {
+/* 白纸 · Figma 1:298 Rectangle 136 默认位 (87,157) 880×623 圆角 30
+   平移/缩放用 transform 相对偏移；无 JS 时也保持默认大小位置 */
+#analysisView .canvas-holder {
   position: absolute;
   left: 87px;
   top: 157px;
@@ -1212,11 +1242,19 @@ button {
   background: var(--piko-white);
   box-shadow: var(--piko-shadow);
   overflow: hidden;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
-/* Piko 画板模式下藏系统状态条 */
-#analysisView.piko-canvas-mode ~ #systemStatusBar,
-#pikoStage:has(#analysisView.piko-canvas-mode) #systemStatusBar {
+#analysisView .canvas-holder canvas {
+  touch-action: none;
+}
+
+#analysisView ~ #systemStatusBar,
+#pikoStage:has(#analysisView:not(.hidden)) #systemStatusBar {
   display: none !important;
 }
 
@@ -1236,10 +1274,47 @@ button {
   box-shadow: var(--piko-shadow);
 }
 
+.piko-gallery-menu-btn.is-active {
+  outline: 3px solid rgba(255, 122, 26, 0.35);
+  outline-offset: 2px;
+}
+
 .piko-gallery-menu-btn img {
   width: 27px;
   height: 27px;
   display: block;
+}
+
+.gallery-select-bar {
+  position: absolute;
+  left: 120px;
+  right: 140px;
+  top: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.gallery-select-bar > * { pointer-events: auto; }
+
+.gallery-select-count {
+  color: var(--piko-orange);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.gallery-delete-btn {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 999px;
+  background: var(--piko-text);
+  color: var(--piko-white);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .gallery-grid {
@@ -1253,15 +1328,58 @@ button {
   grid-auto-rows: 216px;
   gap: 29px 34px;
   align-content: start;
+  overflow: auto;
 }
 
 .gallery-card {
+  position: relative;
   width: 305px;
   height: 216px;
-  border: none;
+  padding: 0;
+  border: 3px solid transparent;
   border-radius: var(--piko-radius-card);
   background: var(--piko-cream);
   box-shadow: var(--piko-shadow);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.piko-gallery.is-selecting .gallery-card.is-selected {
+  border-color: var(--piko-orange);
+}
+
+.gallery-card-check {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--piko-muted);
+  border-radius: 50%;
+  background: var(--piko-white);
+  color: transparent;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.gallery-card.is-selected .gallery-card-check {
+  border-color: var(--piko-orange);
+  background: var(--piko-orange);
+  color: var(--piko-white);
+}
+
+.gallery-card-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
 }
 
 /* ============================================================
@@ -1269,7 +1387,9 @@ button {
 ============================================================ */
 
 #debugPanel,
-#acousticAnalysisModal {
+#acousticAnalysisModal,
+#transformView,
+#systemStatusBar {
   display: none !important;
 }
 

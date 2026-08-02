@@ -182,6 +182,133 @@ class SoundTransformView {
     }
   }
 
+  /**
+   * Magic 屏专用：只跑真实分析（Python + 千问定类 + 笔刷映射），
+   * 不打开旧 Transform/声学弹窗，也不做演示用 pause。
+   * onPhase?.(phase, detail) — listening | qwen | mapping | done | error
+   */
+  async runHeadless(sample, { onPhase } = {}) {
+    if (!sample || !this.app) return null;
+    this.sample = sample;
+    this.running = true;
+    sample.status = "analyzing";
+    if (typeof this.app.renderLibrary === "function") this.app.renderLibrary();
+
+    onPhase?.("listening", { sample });
+
+    let pyData = null;
+    try {
+      if (window.pythonClient) {
+        onPhase?.("qwen", { sample });
+        pyData = await window.pythonClient.analyzeWavBlob(sample.file, sample.fileName);
+      }
+    } catch (err) {
+      console.warn("[transform] headless analyze failed:", err);
+      onPhase?.("error", { sample, error: err });
+    }
+
+    if (!this.running) return null;
+
+    sample.pythonSemantic = pyData?.semantic || null;
+    sample.pythonSemanticError = pyData?.semanticError || null;
+    if (pyData?.analysisExport) sample.pythonAnalysis = pyData.analysisExport;
+
+    onPhase?.("mapping", {
+      sample,
+      semantic: pyData?.semantic || null,
+      semanticError: pyData?.semanticError || null
+    });
+
+    const audioBuffer = await this.decodeSampleBuffer(sample);
+    if (!this.running) return null;
+
+    const localAnalysis = this.app.sampleAnalyzer.analyzeBuffer(audioBuffer);
+    const features = FeatureSchema.normalizeFeatures(localAnalysis);
+    const acoustic = pyData?.acoustic || localAnalysis.acoustic || null;
+
+    // 迷你波形快照（Sounds / Brush 卡用）
+    try {
+      const channel = this.mixDownChannel(audioBuffer);
+      const snapshot = new Float32Array(400);
+      for (let i = 0; i < 400; i++) {
+        snapshot[i] = channel[Math.floor((i * channel.length) / 400)];
+      }
+      sample.waveformSnapshot = snapshot;
+    } catch (_) { /* noop */ }
+
+    const hwFeatures = sample.esp32MetricsSeries?.length >= 2
+      ? extractFeaturesFromEsp32Metrics(sample.esp32MetricsSeries)
+      : null;
+    if (hwFeatures) {
+      ["volume", "bass", "mid", "treble", "brightness", "energy", "roughness", "pitch", "dynamicRange"].forEach((key) => {
+        features[key] = FeatureSchema.clamp01((features[key] ?? 0) * 0.55 + (hwFeatures[key] ?? 0) * 0.45);
+      });
+      if (hwFeatures.spectrumProfile?.length) {
+        features.spectrumProfile = hwFeatures.spectrumProfile;
+      }
+    }
+
+    let aiResult = this.app.soundPersonalityAI.computeAll(features);
+    let visualParams = this.app.visualMappingEngine.compute(
+      aiResult.personality, features, aiResult
+    );
+
+    if (pyData) {
+      const pyFeatures = FeatureSchema.fromPythonResult(pyData);
+      Object.assign(features, FeatureSchema.mergeFeatures(features, pyFeatures, 0.55));
+      if (pyData.visualModifiers) {
+        visualParams = VisualParamFusion.mergeAndClamp(visualParams, pyData.visualModifiers, 0.6);
+      }
+      aiResult = this.app.soundPersonalityAI.computeAll(features);
+    }
+
+    const identity = this.app.soundPersonalityAI.generateIdentity(
+      features, aiResult, visualParams
+    );
+    aiResult.identity = identity;
+
+    if (pyData && typeof NaturalSoundArchetypes !== "undefined") {
+      NaturalSoundArchetypes.applyFromFeatures({ ...pyData, features });
+      visualParams =
+        window.activeFusedVisualParams ||
+        window.activeVisualParams ||
+        visualParams;
+    }
+
+    sample.features = features;
+    sample.aiResult = aiResult;
+    sample.visualParams = visualParams;
+    sample.acoustic = acoustic;
+    sample.shapeProfile = acoustic?.shapeProfile || null;
+    sample.status = "analyzed";
+    this.app.onSampleAnalyzed(sample, "transform");
+
+    window.activeVisualParams = visualParams;
+    window.activePersonality = aiResult.personality;
+    window.activeAiResult = aiResult;
+    window.activeAudioFeatures = features;
+    window.activeAcousticViz = acoustic;
+    window.activeShapeProfile = acoustic?.shapeProfile || null;
+    window.activeNaturalArchetype = pyData?.analysisExport?.naturalArchetype ||
+      (pyData?.semantic?.archetype
+        ? {
+            id: pyData.semantic.archetype,
+            labelZh: pyData.semantic.archetypeLabelZh || pyData.semantic.soundLabel,
+            source: "qwen"
+          }
+        : null);
+    window.activeShapeProfileVersion = `${sample.id}-${Date.now()}`;
+    if (acoustic) window.pythonAcousticViz = acoustic;
+
+    this.running = false;
+    onPhase?.("done", {
+      sample,
+      semantic: pyData?.semantic || null,
+      semanticError: pyData?.semanticError || null
+    });
+    return { pyData, sample };
+  }
+
   async runAcousticAnalysisStep(sample) {
     const pipe = document.getElementById("pipelineStatus");
     if (pipe) {

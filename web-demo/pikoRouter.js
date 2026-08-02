@@ -16,15 +16,12 @@
     magic: 'magicView',
     brush: 'brushView',
     gallery: 'galleryView',
-    library: 'libraryView',
-    transform: 'transformView',
     analysis: 'analysisView'
   };
 
   // 主流程顺序，用来判断这次切屏是前进还是后退
   var FLOW = [
-    'splash', 'collect', 'sounds', 'magic', 'brush',
-    'library', 'transform', 'analysis', 'gallery'
+    'splash', 'collect', 'sounds', 'magic', 'brush', 'analysis', 'gallery'
   ];
 
   var ANIM_CLASSES = [
@@ -66,11 +63,21 @@
     var mode = (options && options.mode) || direction(prev, name);
     var leaving = prev ? el(screens[prev]) : null;
     var entering = el(screens[name]);
+    if (!entering && name) {
+      console.warn('[PikoRouter] unknown screen:', name);
+      return;
+    }
 
+    var targetId = screens[name];
+    var seen = {};
     Object.keys(screens).forEach(function (key) {
-      var node = el(screens[key]);
+      var id = screens[key];
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      var node = el(id);
       if (!node || node === leaving) return;
-      node.classList.toggle('hidden', key !== name);
+      // 按 DOM id 显隐，避免同一节点被多个别名反复 toggle 成 hidden
+      node.classList.toggle('hidden', id !== targetId);
     });
 
     window.PikoRouter.current = name;

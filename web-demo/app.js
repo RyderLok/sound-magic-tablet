@@ -69,7 +69,7 @@ const App = {
 
     PlateManager.load();
 
-    document.getElementById("backBtn").addEventListener("click", () => this.enterLibraryView());
+    document.getElementById("backBtn")?.addEventListener("click", () => this.enterLibraryView());
     document.getElementById("transformBackBtn")?.addEventListener("click", () => this.enterLibraryView());
     document.getElementById("clearCanvasBtn")?.addEventListener("click", () => {
       if (this.canvasInteraction) this.canvasInteraction.resetField();
@@ -296,9 +296,9 @@ const App = {
     if (!active) return;
     this._plateCanvasInitialized = true;
 
-    document.getElementById("libraryView").classList.add("hidden");
-    document.getElementById("transformView").classList.add("hidden");
-    document.getElementById("analysisView").classList.remove("hidden");
+    document.getElementById("libraryView")?.classList.add("hidden");
+    document.getElementById("transformView")?.classList.add("hidden");
+    document.getElementById("analysisView")?.classList.remove("hidden");
 
     if (this.transformView) this.transformView.stop();
 
@@ -569,11 +569,7 @@ const App = {
     const sample = this.soundLibrary.find(s => s.id === sampleId);
     if (!sample) return;
     this.selectedSampleId = sampleId;
-
-    document.getElementById("libraryView").classList.add("hidden");
-    document.getElementById("transformView").classList.remove("hidden");
-    document.getElementById("analysisView").classList.add("hidden");
-
+    // 无旧 Transform 界面：静默跑 analysis 管线
     if (this.transformView) this.transformView.start(sample);
   },
 
@@ -592,9 +588,9 @@ const App = {
 
     if (this.transformView) this.transformView.stop();
 
-    document.getElementById("libraryView").classList.add("hidden");
-    document.getElementById("transformView").classList.add("hidden");
-    document.getElementById("analysisView").classList.remove("hidden");
+    document.getElementById("libraryView")?.classList.add("hidden");
+    document.getElementById("transformView")?.classList.add("hidden");
+    document.getElementById("analysisView")?.classList.remove("hidden");
 
     this.updateAnalysisHeader(sample);
 
@@ -638,9 +634,8 @@ const App = {
     if (this.transformView) this.transformView.stop();
     this.plateMode = false;
     document.getElementById("plateBrushStrip")?.classList.add("hidden");
-    document.getElementById("analysisView").classList.add("hidden");
-    document.getElementById("transformView").classList.add("hidden");
-    document.getElementById("libraryView").classList.remove("hidden");
+    document.getElementById("analysisView")?.classList.add("hidden");
+    document.getElementById("transformView")?.classList.add("hidden");
     this.selectedSampleId = null;
     if (this.visualMappingEngine) {
       window.activeVisualParams = this.visualMappingEngine.compute(this.defaultPersonality);
@@ -655,6 +650,7 @@ const App = {
       this.canvasInteraction?.leftField?.clearShapeProfile?.();
     }
     this.renderLibrary();
+    if (window.PikoRouter) window.PikoRouter.show("sounds", { mode: "none" });
   },
 
   updateAnalysisHeader(sample) {

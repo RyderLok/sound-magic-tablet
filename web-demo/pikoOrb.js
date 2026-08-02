@@ -1,29 +1,22 @@
 /**
  * Piko Transform Orb — 声音凝结成笔刷材质的加载球
  *
- * 为什么是「soft-blob 物理 + shader」而不是纯 shader：
- *   纯噪声着色的球，颜色主轴来自固定光照方向，是静态的；噪声只能当细微扰动，
- *   实测稳态 1.5s 内像素只变化约 10/255，肉眼就是一张静止渐变图。
- *   所以把颜色的主导权交给 JS 侧一组「会动的色团」（lobe），
- *   shader 负责把它们以 metaball 方式融合并打上球体光照。
+ * 架构：JS soft-blob 色团物理 + WebGL metaball 着色（不是纯噪声球）。
  *
- * 色团物理（借 Charlotte Dann soft-blob 的思路）：
- *   · 压力      —— 每个色团有目标半径，偏离就回弹
- *   · 斥力      —— 色团互相推开，形成「分离→靠近→融合」的循环
- *   · 张力弹簧  —— 拉回各自的静止轨道半径，不会飞出球外
- *   · 轨道漂移  —— 整簇缓慢公转
- *   · 无理数频率的正弦游走 —— 永不精确重复，避免看出周期
+ * 开源/论文技法整合（在既有球上强化，不换引擎）：
+ *   · Charlotte Dann soft-blob —— 压力 / 斥力 / 张力（色团物理）
+ *   · Bridson et al. curl-noise —— 无散度流场，流体感来源
+ *   · 多层 fbm curl（PlasmaZones / curl-flow 一类做法）—— 大涡 + 细涡
+ *   · Domain warping（IQ / lava-lamp shader 常见）—— 色带被流场拖拽
+ *   · Metaball 场融合 —— 色团指数权重，边界像液滴合并
+ *   · IGN 抖动（Jimenez）—— 抗色带
  *
- * shader 侧：
- *   · metaball 加权融合色团颜色（指数权重，天然平滑）
- *   · curl noise 只用来扰动采样点，让色团边界是流体状而非规则圆
- *   · 光照退化为亮度调制，不再抢夺颜色主导权
- *   · Interleaved Gradient Noise 抖动（Jorge Jimenez）抗色带
+ * 观感目标：橙 / 黄 / 蓝三色在球内流动；边缘实、不发虚。
  */
 (function () {
   'use strict';
 
-  var LOBES = 5;
+  var LOBES = 6;
 
   var VERT = [
     'attribute vec2 a_pos;',
@@ -42,7 +35,6 @@
     'uniform float u_bright;',
     'uniform float u_rough;',
     'uniform float u_breath;',
-    // 每个色团：xy=位置(球半径归一化) z=半径 w=在色带上的取色位置
     'uniform vec4  u_lobes[LOBES];',
     'uniform vec3  u_c0;',
     'uniform vec3  u_c1;',
@@ -60,35 +52,52 @@
     '  vec3 i = floor(p);',
     '  vec3 f = fract(p);',
     '  vec3 u = f * f * (3.0 - 2.0 * f);',
-    '  return mix(mix(mix(dot(hash3(i + vec3(0,0,0)), f - vec3(0,0,0)),',
-    '                     dot(hash3(i + vec3(1,0,0)), f - vec3(1,0,0)), u.x),',
-    '                 mix(dot(hash3(i + vec3(0,1,0)), f - vec3(0,1,0)),',
-    '                     dot(hash3(i + vec3(1,1,0)), f - vec3(1,1,0)), u.x), u.y),',
-    '             mix(mix(dot(hash3(i + vec3(0,0,1)), f - vec3(0,0,1)),',
-    '                     dot(hash3(i + vec3(1,0,1)), f - vec3(1,0,1)), u.x),',
-    '                 mix(dot(hash3(i + vec3(0,1,1)), f - vec3(0,1,1)),',
-    '                     dot(hash3(i + vec3(1,1,1)), f - vec3(1,1,1)), u.x), u.y), u.z);',
+    '  float n000 = dot(hash3(i + vec3(0.0, 0.0, 0.0)), f - vec3(0.0, 0.0, 0.0));',
+    '  float n100 = dot(hash3(i + vec3(1.0, 0.0, 0.0)), f - vec3(1.0, 0.0, 0.0));',
+    '  float n010 = dot(hash3(i + vec3(0.0, 1.0, 0.0)), f - vec3(0.0, 1.0, 0.0));',
+    '  float n110 = dot(hash3(i + vec3(1.0, 1.0, 0.0)), f - vec3(1.0, 1.0, 0.0));',
+    '  float n001 = dot(hash3(i + vec3(0.0, 0.0, 1.0)), f - vec3(0.0, 0.0, 1.0));',
+    '  float n101 = dot(hash3(i + vec3(1.0, 0.0, 1.0)), f - vec3(1.0, 0.0, 1.0));',
+    '  float n011 = dot(hash3(i + vec3(0.0, 1.0, 1.0)), f - vec3(0.0, 1.0, 1.0));',
+    '  float n111 = dot(hash3(i + vec3(1.0, 1.0, 1.0)), f - vec3(1.0, 1.0, 1.0));',
+    '  float nx00 = mix(n000, n100, u.x);',
+    '  float nx10 = mix(n010, n110, u.x);',
+    '  float nx01 = mix(n001, n101, u.x);',
+    '  float nx11 = mix(n011, n111, u.x);',
+    '  float nxy0 = mix(nx00, nx10, u.y);',
+    '  float nxy1 = mix(nx01, nx11, u.y);',
+    '  return mix(nxy0, nxy1, u.z);',
     '}',
 
-    'float potential(vec2 p, float t) {',
-    '  return gnoise(vec3(p * 0.9, t * 0.13));',
+    'float fbm(vec2 p, float t) {',
+    '  float a = 0.0;',
+    '  a += gnoise(vec3(p, t)) * 0.55;',
+    '  a += gnoise(vec3(p * 2.1 + 1.7, t * 1.2)) * 0.30;',
+    '  a += gnoise(vec3(p * 4.3 - 2.2, t * 1.7)) * 0.15;',
+    '  return a;',
     '}',
 
-    // 2D curl：v = (∂ψ/∂y, -∂ψ/∂x)，无散度，扰动才像被液体带着走
     'vec2 curl2(vec2 p, float t) {',
-    '  float e = 0.015;',
-    '  float dx = (potential(p + vec2(e, 0.0), t) - potential(p - vec2(e, 0.0), t)) / (2.0 * e);',
-    '  float dy = (potential(p + vec2(0.0, e), t) - potential(p - vec2(0.0, e), t)) / (2.0 * e);',
-    '  return vec2(dy, -dx);',
+    '  float e = 0.014;',
+    '  float n1 = gnoise(vec3(p + vec2(e, 0.0), t));',
+    '  float n2 = gnoise(vec3(p - vec2(e, 0.0), t));',
+    '  float n3 = gnoise(vec3(p + vec2(0.0, e), t));',
+    '  float n4 = gnoise(vec3(p - vec2(0.0, e), t));',
+    '  return vec2((n3 - n4) / (2.0 * e), -(n1 - n2) / (2.0 * e));',
     '}',
 
-    // 色带取色：0 → c0，1 → c3
-    'vec3 ramp(float t) {',
-    '  t = clamp(t, 0.0, 1.0);',
-    '  vec3 c = mix(u_c0, u_c1, smoothstep(0.00, 0.36, t));',
-    '  c = mix(c, u_c2, smoothstep(0.30, 0.68, t));',
-    '  c = mix(c, u_c3, smoothstep(0.62, 1.00, t));',
-    '  return c;',
+    'vec2 curlFbm(vec2 p, float t) {',
+    '  vec2 f = curl2(p, t * 0.50) * 1.0;',
+    '  f += curl2(p * 1.8 + vec2(2.1, 0.4), t * 0.80) * 0.50;',
+    '  f += curl2(p * 3.4 - vec2(1.3, 0.9), t * 1.15) * 0.24;',
+    '  return f;',
+    '}',
+
+    // tone: ~0 橙 / ~0.5 黄 / ~1 蓝 —— 软过渡，偏梦幻
+    'vec3 lobeColor(float tone) {',
+    '  tone = clamp(tone, 0.0, 1.0);',
+    '  vec3 warm = mix(u_c0, u_c1, smoothstep(0.12, 0.52, tone));',
+    '  return mix(warm, u_c2, smoothstep(0.42, 0.88, tone));',
     '}',
 
     'float ign(vec2 p) {',
@@ -101,16 +110,13 @@
     '  float prog = clamp(u_progress, 0.0, 1.0);',
 
     '  float breath = u_breath * 0.008;',
-    '  float radius = mix(0.235, 0.298, prog) + u_burst * 0.024 + breath;',
-
-    // 轮廓几乎不动：球外形稳，流动只在内部色带
-    '  float edgeAmp = (0.010 + u_energy * 0.008 + u_rough * 0.006) * (1.0 - 0.60 * prog);',
-    '  float rEdge = radius * (1.0 + gnoise(vec3(uv * 1.2, t * 0.08)) * edgeAmp);',
+    '  float radius = mix(0.255, 0.302, prog) + u_burst * 0.022 + breath;',
+    '  float edgeAmp = 0.008 + u_energy * 0.006;',
+    '  float rEdge = radius * (1.0 + gnoise(vec3(uv * 1.1, t * 0.09)) * edgeAmp);',
 
     '  float d = length(uv);',
-    // 很窄的羽化：球缘清楚，颜色不会渗成粉雾
-    '  float softIn  = mix(0.070, 0.038, prog);',
-    '  float softOut = mix(0.055, 0.032, prog);',
+    '  float softIn = 0.022;',
+    '  float softOut = 0.012;',
     '  float mask = 1.0 - smoothstep(rEdge - softIn, rEdge + softOut, d);',
     '  if (mask <= 0.001) { gl_FragColor = vec4(0.0); return; }',
 
@@ -118,65 +124,63 @@
     '  float nz = sqrt(max(0.0, 1.0 - rn * rn));',
     '  vec3 n = normalize(vec3(uv / max(rEdge, 1e-4), nz));',
 
-    // curl 微扰：只搅动色带交界，不把采样点拖出球面
     '  vec2 sp = uv / max(rEdge, 1e-4);',
-    '  float curlAmp = 0.040 + u_energy * 0.028;',
-    '  sp += curl2(sp * 1.20, t * 0.70) * curlAmp;',
-    '  sp += curl2(sp * 2.10, t * 1.10) * (curlAmp * 0.22);',
+    '  float curlAmp = 0.12 + u_energy * 0.07;',
+    '  vec2 flow = curlFbm(sp * 0.95, t * 0.48);',
+    '  sp += flow * curlAmp;',
+    '  sp += curlFbm(sp * 1.7 + vec2(1.2, -0.6), t * 0.78) * (curlAmp * 0.50);',
     '  float spR = length(sp);',
-    '  if (spR > 0.88) sp *= 0.88 / spR;',
+    '  if (spR > 0.93) sp *= 0.93 / spR;',
 
-    // —— metaball 融合：颜色由会动的色团决定 ——
     '  float wsum = 0.0;',
     '  vec3  cacc = vec3(0.0);',
     '  for (int i = 0; i < LOBES; i++) {',
     '    vec2  lp = u_lobes[i].xy;',
     '    float lr = max(u_lobes[i].z, 0.05);',
     '    float dd = length(sp - lp) / lr;',
-    '    float w  = exp(-dd * dd * 2.55);',
+    '    float w  = exp(-dd * dd * 2.65);',
     '    wsum += w;',
-    '    cacc += ramp(u_lobes[i].w) * w;',
+    '    cacc += lobeColor(u_lobes[i].w) * w;',
     '  }',
-    '  vec3 col = cacc / max(wsum, 1e-4);',
+    '  vec3 fluid = cacc / max(wsum, 1e-4);',
 
-    '  col = mix(ramp(0.5 + (u_bright - 0.5) * 0.3), col, clamp(wsum * 2.4, 0.0, 1.0));',
+    '  vec3 col = mix(u_c0, fluid, 0.72);',
 
-    // 球心色满，越近边缘越收进球体，杜绝彩色外渗
-    '  float body = smoothstep(0.0, 0.18, mask) * (1.0 - smoothstep(0.82, 1.0, rn) * 0.22);',
-    '  col *= 0.90 + 0.10 * body;',
+    '  float lava = fbm(sp * 1.8 + flow * 0.40, t * 0.24);',
+    '  lava = lava * 0.5 + 0.5;',
+    '  float yBand = smoothstep(0.34, 0.46, lava) * (1.0 - smoothstep(0.50, 0.64, lava));',
+    // 更宽的蓝带 + 第二层细蓝丝，让蓝色更梦幻可辨
+    '  float bBand = smoothstep(0.48, 0.62, lava) * (1.0 - smoothstep(0.72, 0.92, lava));',
+    '  float bSilk = fbm(sp * 3.2 - flow * 0.55, t * 0.38);',
+    '  bSilk = smoothstep(0.42, 0.68, bSilk * 0.5 + 0.5);',
+    '  col = mix(col, u_c1, yBand * 0.62);',
+    '  col = mix(col, u_c2, bBand * 0.92 + bSilk * 0.38);',
+    '  col = mix(col, u_c0, 0.08);',
 
-    // 菲涅尔贴边、强度低
+    '  float core = 1.0 - smoothstep(0.0, 0.82, rn);',
+    '  col *= 0.92 + 0.22 * core;',
+    '  col = mix(col, mix(u_c1, u_c3, 0.55), 0.16 * core);',
+
     '  float fres = pow(1.0 - clamp(nz, 0.0, 1.0), 2.6);',
-    '  float rimFade = 1.0 - smoothstep(0.78, 1.0, rn);',
-    '  fres *= rimFade * rimFade;',
+    '  fres *= 1.0 - smoothstep(0.84, 1.0, rn);',
+    '  vec3 lightDir = normalize(vec3(-0.35, 0.55, 0.72));',
+    '  float lambert = clamp(dot(n, lightDir) * 0.40 + 0.60, 0.0, 1.0);',
+    '  col *= 0.96 + 0.14 * lambert;',
 
-    '  float la = t * 0.09;',
-    '  vec3 lightDir = normalize(vec3(-0.42 + cos(la) * 0.16, 0.58, 0.65 + sin(la) * 0.10));',
-    '  float lambert = clamp(dot(n, lightDir) * 0.5 + 0.5, 0.0, 1.0);',
-    // 底亮抬高，橙色才透得出来
-    '  col *= 0.98 + 0.38 * lambert;',
-    '  col *= 1.08 + 0.10 * u_bright;',
+    // 边缘偏暖橙，侧边带一点蓝色散，偏梦幻
+    '  float side = clamp(uv.x / max(rEdge, 1e-4), -1.0, 1.0);',
+    '  vec3 rim = mix(u_c0, u_c2, 0.45 + 0.35 * side);',
+    '  col = mix(col, rim, fres * 0.28);',
+    '  float spec = pow(max(dot(n, lightDir), 0.0), 36.0);',
+    '  col += mix(u_c1, u_c3, 0.4) * spec * 0.12;',
+    '  col += mix(u_c0, u_c2, 0.25) * u_burst * 0.20;',
 
-    '  vec3 film = mix(u_c0, u_c3, 0.5 + 0.5 * sin(fres * 3.6 + t * 0.28));',
-    '  col = mix(col, film, fres * 0.08);',
-
-    // 早期几乎不再压灰，饱和度留住
-    '  float grey = dot(col, vec3(0.299, 0.587, 0.114));',
-    '  col = mix(vec3(grey), col, 0.90 + 0.10 * prog);',
-
-    '  float spec = pow(max(dot(n, lightDir), 0.0), 20.0);',
-    '  col += vec3(1.0, 0.96, 0.88) * spec * (0.18 + 0.20 * u_bright);',
-    '  col += mix(u_c3, vec3(1.0), 0.55) * fres * (0.06 + 0.10 * prog);',
-    '  col += vec3(1.0, 0.85, 0.55) * u_burst * (0.22 + fres * 0.26);',
-
-    // 外晕：窄、淡、近白 —— 只勾轮廓，不拖彩色雾
-    '  float gt = max(0.0, d - rEdge) / (rEdge * 0.14);',
-    '  float glow = exp(-6.5 * gt * gt) * (0.06 + 0.08 * prog + u_burst * 0.18);',
-    '  vec3 glowCol = mix(vec3(1.0), col, 0.18);',
-    '  float alpha = clamp(mask + glow * 0.22, 0.0, 1.0);',
-    '  vec3 outRgb = col * mask + glowCol * glow * 0.22;',
+    '  float gt = max(0.0, d - rEdge) / (rEdge * 0.08);',
+    '  float glow = exp(-9.0 * gt * gt) * (0.04 + 0.06 * prog + u_burst * 0.14);',
+    '  vec3 glowCol = mix(mix(u_c0, u_c1, 0.25), u_c2, 0.18);',
+    '  float alpha = clamp(mask + glow * 0.16, 0.0, 1.0);',
+    '  vec3 outRgb = col * mask + glowCol * glow * 0.14;',
     '  outRgb /= max(alpha, 1e-4);',
-
     '  outRgb += (ign(gl_FragCoord.xy) - 0.5) / 255.0;',
     '  gl_FragColor = vec4(outRgb * alpha, alpha);',
     '}'
@@ -194,38 +198,33 @@
     return sh;
   }
 
-  // 默认跟品牌橙 #f16e1c 走：亮橙 + 暖杏 + 浅金，避免偏蓝紫发暗
+  // 橙主 + 柔黄 + 梦幻蓝（偏亮青蓝，少灰紫）
   var DEFAULT_COLORS = [
-    [1.00, 0.72, 0.38],
-    [0.98, 0.48, 0.12],
-    [1.00, 0.58, 0.22],
-    [1.00, 0.88, 0.62]
+    [1.00, 0.48, 0.12], // soft orange
+    [1.00, 0.86, 0.42], // dreamy yellow
+    [0.42, 0.68, 1.00], // luminous blue
+    [1.00, 0.94, 0.82]  // soft highlight
   ];
 
-  /**
-   * 球内色团系统。
-   * 压力 + 斥力 + 张力弹簧会收敛到平衡；单靠它们球会「静止」，
-   * 所以额外叠一层公转和无理数频率的游走，让平衡永远差一点点。
-   */
+  // 2 橙 + 1 黄 + 3 蓝 —— 橙仍是主底，蓝丝明显增多
+  var LOBE_TONES = [0.0, 0.12, 0.48, 0.88, 1.0, 0.95];
+
   function LobeField() {
     this.lobes = [];
     for (var i = 0; i < LOBES; i++) {
-      var a = (i / LOBES) * Math.PI * 2;
-      // 轨道更靠里：色带贴球面中带转，不顶到轮廓外
-      var restR = 0.22 + (i % 2) * 0.10;
+      var a = (i / LOBES) * Math.PI * 2 + 0.35;
+      var restR = 0.18 + (i % 3) * 0.09;
       this.lobes.push({
         x: Math.cos(a) * restR,
         y: Math.sin(a) * restR,
         vx: 0,
         vy: 0,
         restR: restR,
-        // 色团略大：在球内铺成色带，而不是几团飘着的斑点
-        radius: 0.52 + (i % 3) * 0.06,
-        baseRadius: 0.52 + (i % 3) * 0.06,
-        tone: i / (LOBES - 1),
-        // 无理数比例的频率，保证整簇运动不会周期性重复
-        wf1: 0.17 + i * 0.041,
-        wf2: 0.23 + i * 0.037,
+        radius: 0.46 + (i % 3) * 0.07,
+        baseRadius: 0.46 + (i % 3) * 0.07,
+        tone: LOBE_TONES[i],
+        wf1: 0.15 + i * 0.039,
+        wf2: 0.21 + i * 0.033,
         phase: a
       });
     }
@@ -233,34 +232,31 @@
 
   LobeField.prototype.step = function (dt, time, energy) {
     var list = this.lobes;
-    // 公转主导「在球上流动」；径向游走压低，避免色团往外飘
-    var orbit = 0.78 + energy * 0.42;
-    var stiffness = 3.2;
-    var repel = 0.70;
-    var damp = 1.65;
-    var wander = 0.14 + energy * 0.10;
+    // 公转加快：色带明显绕球走
+    var orbit = 1.05 + energy * 0.55;
+    var stiffness = 2.8;
+    var repel = 0.82;
+    var damp = 1.45;
+    var wander = 0.20 + energy * 0.14;
 
     for (var i = 0; i < LOBES; i++) {
       var L = list[i];
       var r = Math.sqrt(L.x * L.x + L.y * L.y) || 1e-4;
 
-      // 公转：切向力 —— 颜色绕球表面走
       var ax = -L.y / r * orbit;
       var ay = L.x / r * orbit;
 
-      // 张力弹簧：牢牢拉回静止轨道
       var pull = -(r - L.restR) * stiffness;
       ax += (L.x / r) * pull;
       ay += (L.y / r) * pull;
 
-      // 斥力：靠太近就推开，形成分离与融合的循环
       for (var j = 0; j < LOBES; j++) {
         if (j === i) continue;
         var O = list[j];
         var dx = L.x - O.x;
         var dy = L.y - O.y;
         var dist = Math.sqrt(dx * dx + dy * dy) || 1e-4;
-        var minD = (L.radius + O.radius) * 0.48;
+        var minD = (L.radius + O.radius) * 0.46;
         if (dist < minD) {
           var f = (minD - dist) / minD * repel;
           ax += (dx / dist) * f;
@@ -268,39 +264,38 @@
         }
       }
 
-      // 游走：以切向为主，径向只留一点点起伏
-      var wobble = 0.72 + 0.28 * Math.sin(time * 0.37 + L.phase);
+      // soft-blob 游走：切向主导，带一点径向起伏
+      var wobble = 0.70 + 0.30 * Math.sin(time * 0.41 + L.phase);
       var tangX = -L.y / r;
       var tangY = L.x / r;
       var radX = L.x / r;
       var radY = L.y / r;
       var tangAmp = Math.sin(time * L.wf1 * 6.283 + L.phase) * wander * wobble;
-      var radAmp = Math.sin(time * L.wf2 * 6.283 + L.phase * 1.7) * wander * 0.28;
+      var radAmp = Math.sin(time * L.wf2 * 6.283 + L.phase * 1.7) * wander * 0.34;
       ax += tangX * tangAmp + radX * radAmp;
       ay += tangY * tangAmp + radY * radAmp;
-      ax += tangX * Math.sin(time * (L.wf2 * 0.61) + L.phase * 2.1) * wander * 0.22;
-      ay += tangY * Math.cos(time * (L.wf1 * 0.53) + L.phase * 0.9) * wander * 0.22;
+      ax += tangX * Math.sin(time * (L.wf2 * 0.71) + L.phase * 2.1) * wander * 0.30;
+      ay += tangY * Math.cos(time * (L.wf1 * 0.63) + L.phase * 0.9) * wander * 0.30;
 
       L.vx = (L.vx + ax * dt) * Math.exp(-dt * damp);
       L.vy = (L.vy + ay * dt) * Math.exp(-dt * damp);
       L.x += L.vx * dt;
       L.y += L.vy * dt;
 
-      // 硬边界：色团中心锁在球内中带
       var nr = Math.sqrt(L.x * L.x + L.y * L.y);
-      if (nr > 0.58) {
-        L.x = L.x / nr * 0.58;
-        L.y = L.y / nr * 0.58;
-        L.vx *= 0.45;
-        L.vy *= 0.45;
+      if (nr > 0.62) {
+        L.x = L.x / nr * 0.62;
+        L.y = L.y / nr * 0.62;
+        L.vx *= 0.42;
+        L.vy *= 0.42;
       }
 
-      // 压力：半径轻呼吸，铺色仍连续
-      L.radius = L.baseRadius * (1 + Math.sin(time * (0.85 + L.wf1) + L.phase) * (0.10 + energy * 0.12));
+      L.radius = L.baseRadius * (1 + Math.sin(time * (0.90 + L.wf1) + L.phase) * (0.12 + energy * 0.14));
+      // 色类锁定在橙/黄/蓝，只做极小抖动，避免漂成粉色
+      L.tone = LOBE_TONES[i] + Math.sin(time * 0.25 + L.phase) * 0.03;
     }
   };
 
-  /** 写进 Float32Array(LOBES*4)，直接喂 uniform4fv */
   LobeField.prototype.pack = function (out, spread) {
     for (var i = 0; i < LOBES; i++) {
       var L = this.lobes[i];
@@ -339,7 +334,7 @@
     this.burst = 0;
     this.features = { energy: 0.45, bright: 0.5, rough: 0.35 };
     this.featSmooth = { energy: 0.45, bright: 0.5, rough: 0.35 };
-    this.colors = DEFAULT_COLORS.slice();
+    this.colors = DEFAULT_COLORS.map(function (c) { return c.slice(); });
     this.colorSmooth = DEFAULT_COLORS.map(function (c) { return c.slice(); });
     this.field = new LobeField();
     this.lobeBuf = new Float32Array(LOBES * 4);
@@ -407,7 +402,6 @@
 
   PikoOrb.prototype.resize = function (force) {
     if (!this.gl) return;
-    // 每帧 getBoundingClientRect 会触发 layout，约 2s 后偶发 GC/回流叠在一起就像卡帧
     if (!force && this._cssW > 0 && this._cssH > 0) {
       var dpr0 = Math.min(window.devicePixelRatio || 1, 2);
       var w0 = Math.max(1, Math.round(this._cssW * dpr0));
@@ -431,30 +425,13 @@
   PikoOrb.prototype.setSample = function (sample) {
     var f = (sample && sample.features) || {};
     this.features = {
-      energy: clamp01(f.energy != null ? f.energy : 0.45),
-      bright: clamp01(f.brightness != null ? f.brightness : 0.5),
-      rough: clamp01(f.roughness != null ? f.roughness : 0.35)
+      energy: clamp01(f.energy != null ? f.energy : 0.62),
+      bright: clamp01(f.brightness != null ? f.brightness : 0.55),
+      rough: clamp01(f.roughness != null ? f.roughness : 0.38)
     };
-
-    var pal = sample && sample.visualParams && sample.visualParams.palette;
-    if (!pal || !pal.length) {
-      this.colors = DEFAULT_COLORS.slice();
-      return;
-    }
-
-    // 同色系会塌；绕色相拉开，但整体偏暖、偏亮，贴品牌橙
-    var base = rgbToHsl(pal[0]);
-    // 若样本色太冷/太暗，把色相拉回暖橙再提亮
-    var warmH = base.h;
-    if (warmH > 50 && warmH < 320) warmH = 28 + (warmH % 17) * 0.4;
-    var sat = Math.max(0.62, Math.min(0.95, base.s + 0.12));
-    var offsets = [-18, 0, 14, 32];
-    var lights = [0.78, 0.62, 0.70, 0.88];
-    var sats = [sat * 0.78, sat, sat * 0.92, sat * 0.55];
-
-    this.colors = offsets.map(function (deg, i) {
-      return hslToRgb01(warmH + deg, sats[i], lights[i]);
-    });
+    // 三色流体配色固定：橙主 / 黄 / 蓝。样本 palette 不再改写球色（否则会漂成粉紫）
+    this.colors = DEFAULT_COLORS.map(function (c) { return c.slice(); });
+    this.colorSmooth = DEFAULT_COLORS.map(function (c) { return c.slice(); });
   };
 
   PikoOrb.prototype.setProgress = function (p) {
@@ -475,17 +452,15 @@
     var self = this;
     var FIXED = 1 / 60;
 
-    // 复用同一回调，避免每帧新建闭包推高 GC（也是「跑一阵突然顿一下」的常见原因）
     this._boundFrame = function frame(now) {
       var frameDt = Math.min(0.05, (now - self._last) / 1000);
       self._last = now;
       self._accum += frameDt;
 
-      // 固定物理步长：偶发卡顿时不会一次猛推，观感更稳
       var steps = 0;
       while (self._accum >= FIXED && steps < 3) {
-        springStep(self.progressSpring, self.targetProgress, FIXED, 2.6);
-        self.burst *= Math.exp(-FIXED * 2.2);
+        springStep(self.progressSpring, self.targetProgress, FIXED, 2.2);
+        self.burst *= Math.exp(-FIXED * 1.9);
 
         self.featSmooth.energy = ema(self.featSmooth.energy, self.features.energy, FIXED, 0.45);
         self.featSmooth.bright = ema(self.featSmooth.bright, self.features.bright, FIXED, 0.55);
@@ -493,7 +468,7 @@
 
         for (var i = 0; i < 4; i++) {
           for (var c = 0; c < 3; c++) {
-            self.colorSmooth[i][c] = ema(self.colorSmooth[i][c], self.colors[i][c], FIXED, 0.7);
+            self.colorSmooth[i][c] = ema(self.colorSmooth[i][c], self.colors[i][c], FIXED, 0.55);
           }
         }
 
@@ -527,9 +502,8 @@
     if (!gl) return;
     this.resize(false);
 
-    var breath = Math.sin(time * 1.95 + 0.4) * 0.70 + Math.sin(time * 1.07) * 0.40;
-    // 色团铺在球内：spread < 1，颜色贴面流动而不是散出轮廓
-    var spread = 0.88 - 0.08 * this.progressSpring.x;
+    var breath = Math.sin(time * 1.85 + 0.4) * 0.70 + Math.sin(time * 1.02) * 0.40;
+    var spread = 0.90 - 0.06 * this.progressSpring.x;
     this.field.pack(this.lobeBuf, spread);
 
     gl.uniform2f(this.u.u_res, this.canvas.width, this.canvas.height);
@@ -555,39 +529,6 @@
     var n = Number(v);
     if (!isFinite(n)) return 0;
     return Math.min(1, Math.max(0, n));
-  }
-
-  function rgbToHsl(rgb) {
-    var r = (rgb.r || 0) / 255, g = (rgb.g || 0) / 255, b = (rgb.b || 0) / 255;
-    var max = Math.max(r, g, b), min = Math.min(r, g, b);
-    var l = (max + min) / 2;
-    var d = max - min;
-    if (d === 0) return { h: 30, s: 0, l: l };
-    var s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    var h;
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
-    else if (max === g) h = (b - r) / d + 2;
-    else h = (r - g) / d + 4;
-    return { h: h * 60, s: s, l: l };
-  }
-
-  function hslToRgb01(h, s, l) {
-    h = ((h % 360) + 360) % 360 / 360;
-    s = Math.min(1, Math.max(0, s));
-    l = Math.min(1, Math.max(0, l));
-    if (s === 0) return [l, l, l];
-    var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    var p = 2 * l - q;
-    return [hue2rgb(p, q, h + 1 / 3), hue2rgb(p, q, h), hue2rgb(p, q, h - 1 / 3)];
-  }
-
-  function hue2rgb(p, q, t) {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1 / 6) return p + (q - p) * 6 * t;
-    if (t < 1 / 2) return q;
-    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-    return p;
   }
 
   window.PikoOrb = PikoOrb;
