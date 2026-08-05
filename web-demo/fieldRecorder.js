@@ -76,7 +76,7 @@ class FieldRecorder {
       if (evt.status === "started") {
         this.start({ skipSerialCommand: true, fromHardware: true });
       } else if (evt.status === "stopped") {
-        this.stop({ skipSerialCommand: true, fromHardware: true });
+        this.stop({ skipSerialCommand: true, fromHardware: true, autoSave: true });
       }
     };
     // If Keyes skips rec_start JSON and only streams PCM, first frame still arms UI
@@ -84,6 +84,15 @@ class FieldRecorder {
       if (!this.recording) {
         this.start({ skipSerialCommand: true, fromHardware: true });
       }
+    };
+    // Bridge finished upload to Piko backend — pull that sound into the library
+    esp.onSession = (evt) => {
+      if (!evt || evt.status !== "uploaded" || !evt.soundId) return;
+      const client = window.SoundsApiClient;
+      if (!client || !this.app) return;
+      client.syncIntoApp(this.app).catch((err) => {
+        console.warn("[record] post-upload sync failed:", err);
+      });
     };
   }
 
@@ -398,6 +407,18 @@ class FieldRecorder {
       this.els.saveSummary.textContent =
         `${this.app.formatDuration(duration)} · INMP441 PCM ${pcmKb} KB · 峰值 ${maxPct}%`;
     }
+
+    // Hardware / PCM session: Stop → auto Save (no manual Save click)
+    if (options.fromHardware || options.autoSave === true || this.usedPcmPath) {
+      if (this.els.hint) {
+        this.els.hint.textContent = options.autoLimit
+          ? `已达 ${FieldRecorder.MAX_DURATION_SEC}s，自动停止并保存…`
+          : "录音结束，正在自动保存…";
+      }
+      await this.savePending({ quiet: true });
+      return;
+    }
+
     if (this.els.hint) {
       this.els.hint.textContent = options.autoLimit
         ? `已达 ${FieldRecorder.MAX_DURATION_SEC}s 上限，自动停止。点 ▶ 试听真实硬件原声，命名后 Save。`
@@ -410,9 +431,9 @@ class FieldRecorder {
     this.els.nameInput?.focus();
   }
 
-  async savePending() {
+  async savePending(options = {}) {
     if (!this.pendingBlob) {
-      alert("没有可保存的录音，请先 Start → Stop。");
+      if (!options.quiet) alert("没有可保存的录音，请先 Start → Stop。");
       return;
     }
     this.stopPreview();
@@ -426,7 +447,7 @@ class FieldRecorder {
       esp32UsedPcm: this.usedPcmPath
     });
 
-    if (window.acousticAnalysisWindow) {
+    if (!options.quiet && window.acousticAnalysisWindow) {
       window.acousticAnalysisWindow.analyzeAndShow(file, file.name, {
         sampleName: name,
         duration: sample?.duration || this.pendingDuration,
@@ -445,7 +466,9 @@ class FieldRecorder {
     this.pendingBlob = null;
     this.pendingDuration = 0;
     if (this.els.hint) {
-      this.els.hint.textContent = "已保存到 Sound Library。可以继续录下一个。";
+      this.els.hint.textContent = options.quiet
+        ? "已自动保存到 Sound Library。可继续录下一个。"
+        : "已保存到 Sound Library。可以继续录下一个。";
     }
     this.setPanel("idle");
   }

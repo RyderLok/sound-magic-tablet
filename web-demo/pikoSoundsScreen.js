@@ -57,10 +57,10 @@
 
     var atLimit = selectedCount() >= maxBrushes();
 
-    track.innerHTML = list.map(function (s) {
+    track.innerHTML = list.map(function (s, idx) {
       var picked = isSelected(s.id);
       var blocked = !picked && atLimit;
-      var name = (s.aiResult && s.aiResult.identity && s.aiResult.identity.name) || s.name;
+      var name = 'sound' + (idx + 1);
       return '' +
         '<div class="sound-card' + (picked ? ' is-selected' : '') + (blocked ? ' is-disabled' : '') + '"' +
         ' data-sound-id="' + escapeHtml(s.id) + '" role="button" tabindex="0" aria-pressed="' + picked + '">' +
@@ -189,9 +189,16 @@
       });
     }
 
-    // 进入本屏时刷新一次
+    // 进入本屏时：先拉后端 Sounds，再渲染
     document.addEventListener('piko:screen', function (event) {
-      if (event.detail && event.detail.screen === 'sounds') render();
+      if (!event.detail || event.detail.screen !== 'sounds') return;
+      var a = app();
+      var client = window.SoundsApiClient;
+      if (a && client && typeof client.syncIntoApp === 'function') {
+        client.syncIntoApp(a).finally(function () { render(); });
+      } else {
+        render();
+      }
     });
   }
 

@@ -34,6 +34,7 @@ class SoundTransformView {
         if (!this.sample || !this.app) return;
         if (typeof PlateManager !== "undefined" && PlateManager.isSelected(this.sample.id)) {
           this.app.enterPlateStudio();
+          if (window.PikoRouter) window.PikoRouter.show("analysis", { mode: "none" });
         } else {
           this.app.plateMode = false;
           this.app.enterAnalysisView(this.sample.id);

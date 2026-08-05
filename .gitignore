@@ -33,6 +33,8 @@ out/
 *.egg
 python-service/output/*
 !python-service/output/.gitkeep
+python-service/sounds/*
+!python-service/sounds/.gitkeep
 
 # Large archives / packaging (do not sync via git)
 *.zip

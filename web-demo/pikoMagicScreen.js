@@ -8,6 +8,7 @@
   'use strict';
 
   var running = false;
+  var aborted = false;
   var orb = null;
   var thinkTimer = null;
   var PILL = 'Brush Blooming';
@@ -73,6 +74,7 @@
   async function run() {
     if (running) return;
     running = true;
+    aborted = false;
 
     var a = app();
     var list = pendingSamples();
@@ -95,7 +97,7 @@
         await delay(BLOOM_HOLD_MS);
       }
       running = false;
-      if (window.PikoRouter && window.PikoRouter.current === 'magic') {
+      if (!aborted && window.PikoRouter && window.PikoRouter.current === 'magic') {
         window.PikoRouter.show('brush');
       }
       return;
@@ -103,6 +105,7 @@
 
     try {
       for (var i = 0; i < todo.length; i++) {
+        if (aborted) break;
         var sample = todo[i];
         var base = i / total;
         // 留给「快结束」的余量小一点，长时间思考时球一直在后半段慢慢涨
@@ -140,15 +143,24 @@
           }
         });
         stopThinkingProgress(view, doneAt);
+        if (aborted) break;
         if (view) view.setSample(sample);
 
         var elapsed = Date.now() - sampleStarted;
         if (elapsed < MIN_SAMPLE_MS) {
           await delay(MIN_SAMPLE_MS - elapsed);
         }
+        if (aborted) break;
         if (i < todo.length - 1) await delay(BETWEEN_MS);
 
         void result;
+      }
+
+      if (aborted) {
+        running = false;
+        stopThinkingProgress();
+        if (view) view.stop();
+        return;
       }
 
       stopThinkingProgress(view, 1);
@@ -167,7 +179,7 @@
     }
 
     running = false;
-    if (window.PikoRouter && window.PikoRouter.current === 'magic') {
+    if (!aborted && window.PikoRouter && window.PikoRouter.current === 'magic') {
       window.PikoRouter.show('brush');
     }
   }
@@ -181,24 +193,55 @@
     }, 720);
   }
 
+  function showAbortModal(show) {
+    var modal = el('magicAbortModal');
+    if (modal) modal.classList.toggle('hidden', !show);
+  }
+
+  function requestAbort() {
+    if (!window.PikoRouter || window.PikoRouter.current !== 'magic') return;
+    if (!running) {
+      if (window.PikoRouter) window.PikoRouter.show('sounds');
+      return;
+    }
+    showAbortModal(true);
+  }
+
+  function confirmAbort() {
+    aborted = true;
+    var a = app();
+    if (a && a.transformView) a.transformView.running = false;
+    stopThinkingProgress();
+    showAbortModal(false);
+    running = false;
+    if (orb) orb.stop();
+    if (window.PikoRouter) window.PikoRouter.show('sounds');
+  }
+
+  function cancelAbort() {
+    showAbortModal(false);
+  }
+
   function bind() {
     var back = el('magicBackBtn');
-    if (back) {
-      back.addEventListener('click', function () {
-        var a = app();
-        if (a && a.transformView) a.transformView.running = false;
-        stopThinkingProgress();
-        if (window.PikoRouter) window.PikoRouter.show('sounds');
-      });
-    }
+    if (back) back.addEventListener('click', requestAbort);
+
+    var confirmBtn = el('magicAbortConfirmBtn');
+    var cancelBtn = el('magicAbortCancelBtn');
+    var backdrop = el('magicAbortBackdrop');
+    if (confirmBtn) confirmBtn.addEventListener('click', confirmAbort);
+    if (cancelBtn) cancelBtn.addEventListener('click', cancelAbort);
+    if (backdrop) backdrop.addEventListener('click', cancelAbort);
 
     document.addEventListener('piko:screen', function (event) {
       if (!event.detail) return;
       if (event.detail.screen === 'magic') {
         clearTimeout(stopTimer);
+        showAbortModal(false);
         pillText(PILL);
         run();
       } else {
+        showAbortModal(false);
         stopThinkingProgress();
         stopOrbAfterTransition();
       }

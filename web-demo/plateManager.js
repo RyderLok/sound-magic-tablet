@@ -118,7 +118,16 @@ const PlateManager = {
     if (!active?.visualParams) return null;
 
     const vp = { ...active.visualParams };
-    if (platePalette.length) vp.palette = platePalette;
+    // active 笔刷的自身 palette 打头，保证画板主色与 P1/P2 预览一致；
+    // 其余 plate 颜色仅作补充，不覆盖 active 主色。
+    const activePal = active.visualParams.palette || [];
+    if (activePal.length) {
+      const seen = new Set(activePal.map((c) => `${c.r},${c.g},${c.b}`));
+      const rest = platePalette.filter((c) => !seen.has(`${c.r},${c.g},${c.b}`));
+      vp.palette = activePal.concat(rest);
+    } else if (platePalette.length) {
+      vp.palette = platePalette;
+    }
     vp._plateBrushCount = samples.length;
     vp._activeBrushName = active.name;
     return { active, samples, platePalette, visualParams: vp };

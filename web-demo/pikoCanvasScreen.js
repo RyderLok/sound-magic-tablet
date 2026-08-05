@@ -122,8 +122,9 @@
     var back = el('pikoCanvasBackBtn');
     if (back) {
       back.addEventListener('click', function () {
-        if (window.PikoRouter) window.PikoRouter.show('brush', { mode: 'none' });
-        else deactivate();
+        // 画板返回 → Collect 首页（P3）
+        deactivate();
+        if (window.PikoRouter) window.PikoRouter.show('collect', { mode: 'back' });
       });
     }
 
@@ -173,9 +174,7 @@
           }
           if (window.PikoRouter) window.PikoRouter.show('gallery', { mode: 'none' });
           else deactivate();
-          if (window.PikoGalleryScreen && typeof window.PikoGalleryScreen.render === 'function') {
-            window.PikoGalleryScreen.render();
-          }
+          // gallery 切屏会经 piko:screen 触发 PikoGalleryScreen.render()，这里不要再调一次（会竞态叠两套卡）
         } catch (err) {
           console.warn('[PikoCanvas] save failed:', err);
         } finally {

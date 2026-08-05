@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Piko</title>
-  <link rel="stylesheet" href="style.css?v=piko37" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=piko63" />
 </head>
 <body>
 
@@ -12,9 +15,15 @@
 <div id="pikoStage">
 
   <!-- ================================================================
-       P1 · SPLASH — 橙底品牌启动页，1.5s 后自动进入 Collect
+       P1 · SPLASH — 橙底 + 黄圆装饰（严格按设计稿）
   ================================================================ -->
   <div id="splashView" class="view piko-screen piko-splash">
+    <!-- 设计稿黄圆装饰 -->
+    <span class="splash-blob splash-blob-lg" aria-hidden="true"></span>
+    <span class="splash-blob splash-blob-tr" aria-hidden="true"></span>
+    <span class="splash-blob splash-blob-ml" aria-hidden="true"></span>
+    <span class="splash-blob splash-blob-br" aria-hidden="true"></span>
+
     <img class="splash-logo" src="piko-assets/logo-piko.svg" alt="Piko" />
     <span class="splash-spark splash-spark-1" aria-hidden="true"></span>
     <span class="splash-spark splash-spark-2" aria-hidden="true"></span>
@@ -79,6 +88,44 @@
     </div>
 
     <p id="collectStatus" class="collect-status">Waiting for recorder<span class="collect-status-dots">...</span></p>
+  </div>
+
+  <!-- ================================================================
+       P2b · COLLECT TRANSFER — Figma node 59:83 1:1
+       分层：黄丘 CSS / 笔 P3 / 设备 P2 / 波形 canvas / 进度与文案 DOM
+  ================================================================ -->
+  <div id="transferView" class="view piko-screen piko-transfer hidden">
+    <!-- Ellipse 61 -->
+    <div class="transfer-hill" aria-hidden="true"></div>
+
+    <!-- Ellipse 53 · 返回 -->
+    <button type="button" id="transferBackBtn" class="piko-round-btn is-filled transfer-back-btn" title="Back" aria-label="Back">
+      <img src="piko-assets/icon-chevron-left.svg" alt="" />
+    </button>
+
+    <!-- Collect 标题 -->
+    <h1 class="transfer-title">Collect</h1>
+
+    <!-- Group 115 · 录音笔 -->
+    <img class="transfer-pen" src="piko-assets/transfer-pen-p3.svg" alt="" width="95" height="108" draggable="false" />
+
+    <!-- Line 1 · 虚线指示 -->
+    <span class="transfer-dash" aria-hidden="true"></span>
+
+    <!-- Union · 当前上传声音波形 -->
+    <canvas id="transferWaveCanvas" class="transfer-wave" width="282" height="48" aria-hidden="true"></canvas>
+
+    <!-- Group 116 · 设备 -->
+    <div class="transfer-device-wrap">
+      <img class="transfer-device" src="piko-assets/transfer-device-p2.svg" alt="" width="530" height="405" draggable="false" />
+      <span class="transfer-port" aria-hidden="true"></span>
+    </div>
+
+    <!-- 进度 % · Pixelify Sans -->
+    <div id="transferProgressText" class="transfer-progress-text" aria-live="polite">0%</div>
+
+    <!-- 底文案 · 真实 DOM 文字（非 PNG） -->
+    <p id="transferStatus" class="transfer-status">Sending your sounds<span class="transfer-status-dots"><span class="transfer-status-dots-ghost">…</span><span id="transferStatusDots" class="transfer-status-dots-live" aria-hidden="true">...</span></span></p>
   </div>
 
   <!-- ================================================================
@@ -162,9 +209,27 @@
     <h1 class="piko-title">My Gallery</h1>
     <div id="gallerySelectBar" class="gallery-select-bar hidden" aria-live="polite">
       <span id="gallerySelectCount" class="gallery-select-count">0 selected</span>
-      <button type="button" id="galleryDeleteBtn" class="gallery-delete-btn">删除</button>
+      <button type="button" id="galleryDeleteBtn" class="gallery-delete-btn">Delete</button>
     </div>
     <div id="galleryGrid" class="gallery-grid"></div>
+    <button type="button" id="galleryPrintBtn" class="piko-cta gallery-print-btn" disabled>Print</button>
+  </div>
+
+  <!-- ================================================================
+       P8 · PRINTING — 选中画布后打印（Figma 1:644）
+  ================================================================ -->
+  <div id="printingView" class="view piko-screen piko-printing hidden">
+    <div class="transfer-hill" aria-hidden="true"></div>
+    <h1 class="printing-title">Printing</h1>
+
+    <div class="printing-device-wrap">
+      <span class="printing-paper" aria-hidden="true"></span>
+      <img class="transfer-device" src="piko-assets/transfer-device-p2.svg" alt="" width="530" height="405" draggable="false" />
+      <span class="printing-port" aria-hidden="true"></span>
+    </div>
+
+    <div id="printingProgressText" class="transfer-progress-text printing-progress-text" aria-live="polite">0%</div>
+    <p class="transfer-status printing-status">Your artwork is coming to life<span class="transfer-status-dots"><span class="transfer-status-dots-ghost">…</span><span id="printingStatusDots" class="transfer-status-dots-live" aria-hidden="true">...</span></span></p>
   </div>
 
   <!-- Transform pipeline：无界面，仅保留 SoundTransformView 所需挂点 -->
@@ -211,6 +276,31 @@
   </details>
 
   <!-- 临时：本地上传弹窗 -->
+  <!-- 录音笔上传中断确认（放在 stage 末尾，盖住所有 .view） -->
+  <div id="transferAbortModal" class="transfer-abort-modal hidden" role="dialog" aria-modal="true" aria-labelledby="transferAbortTitle">
+    <div class="transfer-abort-backdrop" id="transferAbortBackdrop"></div>
+    <div class="transfer-abort-panel">
+      <p id="transferAbortTitle" class="transfer-abort-title">Stop the transfer?</p>
+      <p class="transfer-abort-desc">You’ll need to re-insert the recorder to upload again.</p>
+      <div class="transfer-abort-actions">
+        <button type="button" id="transferAbortCancelBtn" class="transfer-abort-btn transfer-abort-btn-ghost">Keep uploading</button>
+        <button type="button" id="transferAbortConfirmBtn" class="transfer-abort-btn transfer-abort-btn-solid">Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="magicAbortModal" class="transfer-abort-modal hidden" role="dialog" aria-modal="true" aria-labelledby="magicAbortTitle">
+    <div class="transfer-abort-backdrop" id="magicAbortBackdrop"></div>
+    <div class="transfer-abort-panel">
+      <p id="magicAbortTitle" class="transfer-abort-title">Stop the analysis?</p>
+      <p class="transfer-abort-desc">AI is still turning your sounds into brushes. You’ll need to start again.</p>
+      <div class="transfer-abort-actions">
+        <button type="button" id="magicAbortCancelBtn" class="transfer-abort-btn transfer-abort-btn-ghost">Keep going</button>
+        <button type="button" id="magicAbortConfirmBtn" class="transfer-abort-btn transfer-abort-btn-solid">Stop</button>
+      </div>
+    </div>
+  </div>
+
   <div id="uploadModal" class="upload-modal hidden" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
     <div class="upload-modal-backdrop" id="uploadModalBackdrop"></div>
     <div class="upload-modal-panel">
@@ -294,11 +384,12 @@
   <script src="featureSchema.js"></script>
   <script src="sampleLibraryStore.js"></script>
   <script src="galleryStore.js?v=1"></script>
-  <script src="plateManager.js"></script>
+  <script src="plateManager.js?v=2"></script>
   <script src="brushSchema.js"></script>
   <script src="visualParamFusion.js"></script>
-  <script src="fieldRecorder.js?v=5"></script>
-  <script src="esp32AudioAdapter.js?v=5"></script>
+  <script src="soundsApiClient.js?v=1"></script>
+  <script src="fieldRecorder.js?v=6"></script>
+  <script src="esp32AudioAdapter.js?v=6"></script>
   <script src="pythonEnhancementClient.js"></script>
   <script src="serviceConnectionManager.js?v=3"></script>
   <script src="acousticAnalysisWindow.js"></script>
@@ -316,17 +407,19 @@
   <script src="sampleAnalyzer.js"></script>
   <script src="soundTransformView.js?v=2"></script>
   <script src="brushGenerator.js"></script>
-  <script src="canvasInteraction.js?v=piko7"></script>
-  <script src="app.js?v=6"></script>
+  <script src="canvasInteraction.js?v=piko8"></script>
+  <script src="app.js?v=10"></script>
   <script src="sketch.js"></script>
   <!-- Piko 新界面：屏幕脚本 + 路由（路由放最后，接管初始显示哪一屏） -->
-  <script src="pikoSoundsScreen.js?v=3"></script>
+  <script src="pikoSoundsScreen.js?v=5"></script>
   <script src="pikoOrb.js?v=32"></script>
-  <script src="pikoMagicScreen.js?v=9"></script>
+  <script src="pikoMagicScreen.js?v=10"></script>
   <script src="pikoBrushScreen.js?v=6"></script>
-  <script src="pikoCanvasScreen.js?v=8"></script>
-  <script src="pikoGalleryScreen.js?v=3"></script>
+  <script src="pikoCanvasScreen.js?v=10"></script>
+  <script src="pikoGalleryScreen.js?v=5"></script>
+  <script src="pikoTransferScreen.js?v=12"></script>
+  <script src="pikoPrintingScreen.js?v=1"></script>
   <script src="pikoCollectCarousel.js?v=12"></script>
-  <script src="pikoRouter.js?v=5"></script>
+  <script src="pikoRouter.js?v=9"></script>
 </body>
 </html>

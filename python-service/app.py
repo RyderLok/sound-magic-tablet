@@ -6,8 +6,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 import config
 from audio_analyzer import analyze_pcm_frame, analyze_wav_bytes
@@ -23,6 +24,7 @@ from schemas import (
     VisualModifiers,
 )
 from visual_mapper import features_to_modifiers, modifiers_to_brush
+import sounds_store
 
 app = FastAPI(title="Piko Python Enhancement", version="1.0.0")
 smoother = EmaSmoother(alpha=0.28)
@@ -54,12 +56,15 @@ def health() -> Dict[str, Any]:
         "endpoints": {
             "health": f"{base}/health",
             "analyzeWav": f"{base}/analyze/wav",
+            "soundsUpload": f"{base}/sounds/upload",
+            "soundsList": f"{base}/sounds",
             "wsAudio": ws,
         },
         "librosa": _librosa_flag(),
         "sampleRate": config.SAMPLE_RATE,
         "analysisHz": config.ANALYSIS_TARGET_HZ,
         "omni": omni,
+        "supabase": sounds_store.status(),
         "pipeline": [
             "WAV",
             "waveform",
@@ -70,6 +75,66 @@ def health() -> Dict[str, Any]:
             "semantic?",
         ],
     }
+
+
+@app.post("/sounds/upload")
+async def sounds_upload(
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    duration_ms: int = Form(0),
+    sample_rate: int = Form(16000),
+    source: str = Form("esp32"),
+) -> Dict[str, Any]:
+    data = await file.read()
+    if len(data) < 64:
+        raise HTTPException(status_code=400, detail="WAV too small")
+    try:
+        row = await sounds_store.upload_sound(
+            data,
+            name=name or None,
+            duration_ms=duration_ms,
+            sample_rate=sample_rate,
+            source=source or "esp32",
+        )
+    except Exception as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+    return {"status": "ok", "sound": row}
+
+
+@app.get("/sounds")
+async def sounds_list() -> Dict[str, Any]:
+    try:
+        rows = await sounds_store.list_sounds()
+    except Exception as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+    return {"status": "ok", "sounds": rows, "backend": sounds_store.status()}
+
+
+@app.get("/sounds/{sound_id}")
+async def sounds_get(sound_id: str) -> Dict[str, Any]:
+    row = await sounds_store.get_sound(sound_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Sound not found")
+    return {"status": "ok", "sound": row}
+
+
+@app.get("/sounds/{sound_id}/audio")
+async def sounds_audio(sound_id: str) -> Response:
+    blob = await sounds_store.read_audio_bytes(sound_id)
+    if not blob:
+        raise HTTPException(status_code=404, detail="Audio not found")
+    return Response(content=blob, media_type="audio/wav")
+
+
+@app.patch("/sounds/{sound_id}")
+async def sounds_patch(sound_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        row = await sounds_store.patch_sound(sound_id, body or {})
+    except Exception as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+    if not row:
+        raise HTTPException(status_code=404, detail="Sound not found")
+    return {"status": "ok", "sound": row}
 
 
 @app.post("/analyze/wav")

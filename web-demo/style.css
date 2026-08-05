@@ -6,7 +6,7 @@
   --piko-yellow: #fdbf42;
   --piko-cream: #f9f8f4;
   --piko-white: #ffffff;
-  --piko-canvas-bg: #413a35;
+  --piko-canvas-bg: #332c28;
   --piko-text: #535353;
   --piko-muted: #cacaca;
   --piko-muted-2: #9a9a9a;
@@ -22,6 +22,8 @@
   --piko-radius-pill: 60px;
 
   --piko-font: "Alimama FangYuanTi VF", "PingFang SC", system-ui, -apple-system, sans-serif;
+  /* Figma 计时数字（mm:ss / 进度%） */
+  --piko-font-pixel: "Pixelify Sans", ui-monospace, monospace;
 
   /* Figma 设计基准画布 */
   --piko-screen-w: 1055px;
@@ -193,10 +195,56 @@ button {
 }
 
 /* ============================================================
-   P1 · SPLASH  (Figma 1:3)
+   P1 · SPLASH  — 设计稿：橙底 + 白 Logo + 黄圆装饰
 ============================================================ */
 
-.piko-splash { background: var(--piko-orange); }
+.piko-splash {
+  background: var(--piko-orange);
+  overflow: hidden;
+}
+
+/* 黄圆装饰 · 相对 1055×834（对齐设计稿） */
+.splash-blob {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* 左下大半圆 · 淡奶油黄 */
+.splash-blob-lg {
+  left: -90px;
+  bottom: -180px;
+  width: 420px;
+  height: 420px;
+  background: #fff4cc;
+}
+
+/* 右上小圆 · 淡奶油黄 */
+.splash-blob-tr {
+  left: 760px;
+  top: 150px;
+  width: 72px;
+  height: 72px;
+  background: #fff4cc;
+}
+
+/* Logo 左侧小圆 · 正黄 */
+.splash-blob-ml {
+  left: 200px;
+  top: 355px;
+  width: 52px;
+  height: 52px;
+  background: #ffc845;
+}
+
+/* 右下小圆 · 正黄 */
+.splash-blob-br {
+  left: 900px;
+  top: 680px;
+  width: 78px;
+  height: 78px;
+  background: #ffc845;
+}
 
 /* Logo 字标 · Figma (371,349) 312×135.33 */
 .splash-logo {
@@ -205,15 +253,17 @@ button {
   top: 349px;
   width: 312px;
   height: 135.33px;
+  z-index: 1;
 }
 
-/* 三道黄火花 · 统一 40×14 圆角 60 */
+/* 三道黄火花 · 统一 40×14 圆角 60 · 在 o 右上 */
 .splash-spark {
   position: absolute;
   width: 40px;
   height: 14px;
   border-radius: 60px;
   background: var(--piko-yellow);
+  z-index: 2;
 }
 
 .splash-spark-1 {
@@ -233,18 +283,19 @@ button {
   top: 417px;
 }
 
-/* Slogan · 居中 top:498，20px */
+/* Slogan · 居中 top:498，20px 白字 */
 .splash-slogan {
   position: absolute;
   top: 498px;
-  left: 527px;
+  left: 50%;
   transform: translateX(-50%);
   margin: 0;
-  color: var(--piko-cream);
+  color: #ffffff;
   font-size: 20px;
   font-weight: 600;
   text-align: center;
   white-space: nowrap;
+  z-index: 1;
 }
 
 /* ============================================================
@@ -474,6 +525,375 @@ button {
 }
 
 .collect-status.is-ready { color: var(--piko-orange); }
+
+/* ============================================================
+   P2b · COLLECT TRANSFER — Figma 59:83 红线 1:1
+============================================================ */
+
+.piko-transfer {
+  background: var(--piko-white);
+}
+
+/* Ellipse 61 · (-21, 445) Ø1095 #FDBF42 */
+.transfer-hill {
+  position: absolute;
+  left: -21px;
+  top: 445px;
+  width: 1095px;
+  height: 1095px;
+  border-radius: 50%;
+  background: var(--piko-yellow);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Ellipse 53 · (31, 60) Ø61 */
+.piko-round-btn.transfer-back-btn {
+  left: 31px;
+  top: 60px;
+  width: 61px;
+  height: 61px;
+  z-index: 5;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+.piko-round-btn.transfer-back-btn img {
+  width: 16px;
+  height: 27px;
+}
+
+/* Collect · (465, 53) 36 Bold */
+.transfer-title {
+  position: absolute;
+  left: 465px;
+  top: 53px;
+  width: 126px;
+  height: 43px;
+  margin: 0;
+  z-index: 5;
+  color: var(--piko-orange);
+  font-family: var(--piko-font);
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 43px;
+  text-align: center;
+}
+
+/* Group 115 · 画板坐标 (283,153) 75×88。
+   Figma 导出的 SVG 含投影余量，画板原点落在 SVG 的 (-273,-143)，
+   所以整张图按该原点摆放，图形自然回到 (283,153)。阴影已在 SVG 内。 */
+.transfer-pen {
+  position: absolute;
+  left: 273px;
+  top: 143px;
+  width: 95px;
+  height: 108px;
+  pointer-events: none;
+  z-index: 3;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Line 1 · (319.5, 248) 97 × rotate(90deg) dashed #FDBF42 */
+.transfer-dash {
+  position: absolute;
+  left: 319.5px;
+  top: 248px;
+  width: 97px;
+  height: 0;
+  border-top: 3px dashed var(--piko-yellow);
+  transform: rotate(90deg);
+  transform-origin: left center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Union · (398.46, 173.46) 282.09×47.67 */
+.transfer-wave {
+  position: absolute;
+  left: 398.46px;
+  top: 173.46px;
+  width: 282.09px;
+  height: 47.67px;
+  display: block;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* device · 画板坐标 (272,285) 509×384；SVG 原点为画板 (-261.56,-274.566) */
+.transfer-device-wrap {
+  position: absolute;
+  left: 261.56px;
+  top: 274.566px;
+  width: 530px;
+  height: 405px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.transfer-device {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Ellipse 68 · 设备顶边接口洞（虚线终点） */
+.transfer-port {
+  position: absolute;
+  left: 32px;
+  top: 45px;
+  width: 51px;
+  height: 51px;
+  border-radius: 50%;
+  background: #E8E8E8;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.18);
+  z-index: 2;
+  pointer-events: none;
+}
+.transfer-port::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -60%) rotate(45deg);
+  border-right: 4px solid var(--piko-yellow);
+  border-bottom: 4px solid var(--piko-yellow);
+}
+
+/* ===== P8 · Printing（Figma 1:644）===== */
+.piko-printing { background: var(--piko-white); }
+
+.printing-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 53px;
+  margin: 0;
+  z-index: 5;
+  color: var(--piko-orange);
+  font-family: var(--piko-font);
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 43px;
+  text-align: center;
+}
+
+.printing-device-wrap {
+  position: absolute;
+  left: 50%;
+  top: 300px;
+  width: 530px;
+  height: 405px;
+  transform: translateX(-50%);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* 纸从设备顶部滑出，随进度上移 */
+.printing-paper {
+  position: absolute;
+  left: 50%;
+  bottom: 355px;
+  width: 210px;
+  height: 150px;
+  transform: translate(-50%, calc((1 - var(--print-p, 0)) * 120px));
+  background: #F5F1E6;
+  border-radius: 10px 10px 4px 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  z-index: 0;
+}
+
+.printing-port {
+  position: absolute;
+  left: 32px;
+  top: 45px;
+  width: 51px;
+  height: 51px;
+  border-radius: 50%;
+  background: #E8E8E8;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.18);
+  z-index: 2;
+}
+
+.piko-printing .printing-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 720px;
+  width: auto;
+  height: auto;
+  margin: 0;
+  z-index: 6;
+  color: #ffffff;
+  font-family: var(--piko-font);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 29px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Figma 1:644 · Print CTA (742,751) 281×67 · 白字 24 */
+.gallery-print-btn {
+  left: 742px;
+  top: 751px;
+  width: 281px;
+  height: 67px;
+  z-index: 6;
+}
+.gallery-print-btn.hidden { display: none; }
+
+/* 进度字：相对屏幕中心宽盒，% 与 FINISH 都不裁切 */
+.transfer-progress-text {
+  position: absolute;
+  left: 399.5px;
+  top: 438px;
+  width: 280px;
+  height: 77px;
+  margin: 0;
+  z-index: 4;
+  color: var(--piko-white);
+  font-family: var(--piko-font-pixel);
+  font-size: 64px;
+  font-weight: 600;
+  line-height: 77px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.transfer-progress-text.is-finish {
+  font-size: 48px;
+  letter-spacing: 0.04em;
+}
+
+.printing-progress-text {
+  left: 50%;
+  top: 470px;
+  transform: translateX(-50%);
+}
+
+/* Sending your sounds… · (391, 699) 24 SemiBold — 必须是 DOM 文字，禁止烤进 PNG */
+.piko-transfer .transfer-status {
+  position: absolute;
+  left: 391px;
+  top: 699px;
+  width: 271px;
+  height: 29px;
+  margin: 0;
+  z-index: 6;
+  color: #ffffff;
+  font-family: var(--piko-font);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 29px;
+  text-align: center;
+  pointer-events: none;
+  background: none !important;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 省略号循环 . → .. → ...
+   ghost 保留设计稿「…」的原始占位，动画点绝对定位叠在它上面，
+   因此整行居中位置与原稿完全一致，只有点在变。 */
+.transfer-status-dots {
+  position: relative;
+  display: inline-block;
+}
+
+.transfer-status-dots-ghost {
+  visibility: hidden;
+}
+
+.transfer-status-dots-live {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+}
+
+/* 中断确认弹层（绝对定位盖住 pikoStage；stage 有 transform，fixed 会失效） */
+.transfer-abort-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+}
+
+.transfer-abort-modal.hidden { display: none !important; }
+
+.transfer-abort-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.transfer-abort-panel {
+  position: relative;
+  z-index: 1;
+  width: 420px;
+  padding: 36px 32px 28px;
+  border-radius: var(--piko-radius-card);
+  background: var(--piko-white);
+  box-shadow: var(--piko-shadow);
+  text-align: center;
+}
+
+.transfer-abort-title {
+  margin: 0 0 10px;
+  color: var(--piko-text);
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.transfer-abort-desc {
+  margin: 0 0 28px;
+  color: var(--piko-muted-2);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.transfer-abort-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+}
+
+.transfer-abort-btn {
+  min-width: 140px;
+  height: 52px;
+  padding: 0 18px;
+  border-radius: var(--piko-radius-cta);
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 140ms ease;
+}
+
+.transfer-abort-btn:active { transform: scale(0.97); }
+
+.transfer-abort-btn-ghost {
+  border: 2px solid var(--piko-orange);
+  background: var(--piko-white);
+  color: var(--piko-orange);
+}
+
+.transfer-abort-btn-solid {
+  border: none;
+  background: var(--piko-orange);
+  color: var(--piko-white);
+  box-shadow: var(--piko-shadow);
+}
 
 /* ============================================================
    通用 Piko 控件（Figma design.md 4.2 / 4.3）
@@ -706,7 +1126,7 @@ button {
 .sound-play:hover { transform: scale(1.06); }
 .sound-play.is-playing { transform: none; }
 
-/* 时长 · 居中 卡内 y=331 */
+/* 时长 · 居中 卡内 y=331 · Pixelify Sans */
 .sound-dur {
   position: absolute;
   left: 0;
@@ -714,8 +1134,11 @@ button {
   top: 331px;
   margin: 0;
   color: var(--piko-orange);
+  font-family: var(--piko-font-pixel);
   font-size: 16px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
@@ -1002,8 +1425,11 @@ button {
   top: 33px;
   margin: 0;
   color: var(--piko-text);
+  font-family: var(--piko-font-pixel);
   font-size: 16px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
 .brush-row-wave {
@@ -1062,8 +1488,11 @@ button {
   right: 36px;
   top: 22px;
   color: var(--piko-orange);
+  font-family: var(--piko-font-pixel);
   font-size: 16px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 预览板 · 实时笔刷动态展示 */
@@ -1122,14 +1551,15 @@ button {
   top: 60px;
   width: 61px;
   height: 61px;
-  background: var(--piko-orange);
+  /* 设计稿：橡皮为黄底圆钮 */
+  background: var(--piko-yellow);
   box-shadow: var(--piko-shadow);
 }
 
 .piko-erase-btn img { width: 28px; height: 26px; }
 
 .piko-erase-btn.is-active {
-  outline: 3px solid var(--piko-yellow);
+  outline: 3px solid var(--piko-white);
   outline-offset: 2px;
 }
 
@@ -1206,6 +1636,16 @@ button {
 }
 
 #analysisView .piko-canvas-chrome { display: block; }
+
+/* analysis 可见时强制 Figma 顶栏，避免 .hidden 把 chrome 藏掉后露出旧 p5 分栏 */
+#analysisView:not(.hidden) #pikoCanvasChrome {
+  display: block !important;
+}
+
+/* 旧 Sound Breathing 球体宿主：Figma 画板不再使用 */
+#analysisView #soundBreathingHost {
+  display: none !important;
+}
 
 #analysisView .analysis-shell {
   display: block;
@@ -1355,7 +1795,7 @@ button {
   z-index: 1;
   width: 30px;
   height: 30px;
-  display: grid;
+  display: none; /* 默认隐藏；点右上多选后才出现（Figma 1:629 → 1:644） */
   place-items: center;
   border: 2px solid var(--piko-muted);
   border-radius: 50%;
@@ -1365,6 +1805,10 @@ button {
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.piko-gallery.is-selecting .gallery-card-check {
+  display: grid;
 }
 
 .gallery-card.is-selected .gallery-card-check {

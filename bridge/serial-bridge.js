@@ -22,6 +22,10 @@ const SERIAL_PORT = readArg("--port", process.env.SERIAL_PORT || "COM3");
 const BAUD_RATE = Number(readArg("--baud", process.env.SERIAL_BAUD || "500000"));
 const WS_PORT = Number(readArg("--ws", process.env.WS_PORT || "8765"));
 const HEALTH_PORT = Number(readArg("--health", process.env.BRIDGE_HEALTH_PORT || "8766"));
+const PYTHON_SOUNDS_URL = (
+  process.env.PYTHON_SOUNDS_URL || "http://127.0.0.1:8001/sounds/upload"
+).replace(/\/$/, "");
+const SAMPLE_RATE = 16000;
 const RECONNECT_MS = 2500;
 
 /** Frame header: A5 5A 01 */
@@ -52,6 +56,13 @@ let pcmIdleTimer = null;
 /** After an explicit stop, ignore trailing PCM so in-flight frames do not re-arm recording. */
 let ignorePcmAutostartUntil = 0;
 
+/** Active recording session PCM buffers (complete WAV uploaded on stop). */
+let sessionPcmChunks = [];
+let sessionStartedAt = 0;
+let sessionUploading = false;
+let lastUploadedSound = null;
+
+
 const wss = new WebSocketServer({ port: WS_PORT });
 const clients = new Set();
 
@@ -71,8 +82,11 @@ function bridgeHealthPayload() {
       open: !!(serial && serial.isOpen)
     },
     pcm: devicePcmCapable,
-    sampleRate: 16000,
+    sampleRate: SAMPLE_RATE,
     recording: hardwareRecording,
+    uploading: sessionUploading,
+    lastUploadedSound,
+    soundsUpload: PYTHON_SOUNDS_URL,
     clients: clients.size,
     timestamp: Date.now()
   };
@@ -103,7 +117,7 @@ wss.on("connection", (socket) => {
     type: "bridge",
     status: "connected",
     pcm: devicePcmCapable,
-    sampleRate: 16000,
+    sampleRate: SAMPLE_RATE,
     serialOpen: !!(serial && serial.isOpen),
     serialPort: SERIAL_PORT,
     serialBaud: BAUD_RATE,
@@ -149,6 +163,145 @@ function writeSerial(line) {
   console.log("[serial] cmd:", line.trim());
 }
 
+function sendTft(status) {
+  const map = {
+    ready: "TFT_READY",
+    recording: "TFT_RECORDING",
+    saving: "TFT_SAVING",
+    uploading: "TFT_UPLOADING",
+    done: "TFT_DONE",
+    error: "TFT_ERROR"
+  };
+  const cmd = map[status] || `TFT_${String(status || "").toUpperCase()}`;
+  writeSerial(cmd);
+}
+
+function pcmChunksToWav(chunks, sampleRate) {
+  const pcm = Buffer.concat(chunks);
+  const dataSize = pcm.length;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  pcm.copy(buffer, 44);
+  return buffer;
+}
+
+async function finalizeAndUploadSession(source) {
+  if (sessionUploading) return;
+  const chunks = sessionPcmChunks;
+  sessionPcmChunks = [];
+  const startedAt = sessionStartedAt || Date.now();
+  sessionStartedAt = 0;
+
+  const pcmBytes = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+  const durationMs = Math.max(
+    0,
+    Math.round(Date.now() - startedAt)
+  );
+
+  if (pcmBytes.length < 640) {
+    console.warn("[session] PCM too short — skip upload");
+    sendTft("error");
+    broadcast({
+      type: "session",
+      status: "error",
+      reason: "pcm_too_short",
+      source,
+      timestamp: Date.now()
+    });
+    return;
+  }
+
+  sessionUploading = true;
+  sendTft("saving");
+  broadcast({
+    type: "session",
+    status: "saving",
+    durationMs,
+    pcmBytes: pcmBytes.length,
+    source,
+    timestamp: Date.now()
+  });
+
+  const wav = pcmChunksToWav([pcmBytes], SAMPLE_RATE);
+  sendTft("uploading");
+  broadcast({
+    type: "session",
+    status: "uploading",
+    durationMs,
+    source,
+    timestamp: Date.now()
+  });
+
+  try {
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([wav], { type: "audio/wav" }),
+      `esp32_${Date.now()}.wav`
+    );
+    form.append("duration_ms", String(durationMs));
+    form.append("sample_rate", String(SAMPLE_RATE));
+    form.append("source", "esp32");
+
+    const res = await fetch(PYTHON_SOUNDS_URL, {
+      method: "POST",
+      body: form
+    });
+    const text = await res.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch (_) {
+      payload = null;
+    }
+    if (!res.ok) {
+      throw new Error(`upload ${res.status}: ${text.slice(0, 180)}`);
+    }
+    const sound = payload?.sound || payload;
+    lastUploadedSound = {
+      id: sound?.id || null,
+      name: sound?.name || null,
+      durationMs: sound?.duration_ms ?? durationMs,
+      at: Date.now()
+    };
+    sendTft("done");
+    broadcast({
+      type: "session",
+      status: "uploaded",
+      soundId: lastUploadedSound.id,
+      name: lastUploadedSound.name,
+      durationMs: lastUploadedSound.durationMs,
+      source,
+      timestamp: Date.now()
+    });
+    console.log("[session] uploaded", lastUploadedSound.id, lastUploadedSound.name);
+  } catch (err) {
+    console.error("[session] upload failed:", err.message || err);
+    sendTft("error");
+    broadcast({
+      type: "session",
+      status: "error",
+      reason: String(err.message || err),
+      source,
+      timestamp: Date.now()
+    });
+  } finally {
+    sessionUploading = false;
+  }
+}
+
 function clearPcmIdleTimer() {
   if (pcmIdleTimer) {
     clearTimeout(pcmIdleTimer);
@@ -180,6 +333,8 @@ function startHardwareRecording(source = "computer", options = {}) {
     recordingFromPcm = source === "pcm";
     pcmFrameCount = 0;
     ignorePcmAutostartUntil = 0;
+    sessionPcmChunks = [];
+    sessionStartedAt = Date.now();
   } else if (source === "computer") {
     recordingFromPcm = false;
   }
@@ -190,9 +345,16 @@ function startHardwareRecording(source = "computer", options = {}) {
 
   // hw_record only on true edge — avoids restarting UI capture mid-take
   if (!already) {
+    sendTft("recording");
     broadcast({
       type: "hw_record",
       status: "started",
+      source,
+      timestamp: Date.now()
+    });
+    broadcast({
+      type: "session",
+      status: "recording",
       source,
       timestamp: Date.now()
     });
@@ -233,6 +395,12 @@ function stopHardwareRecording(source = "computer", options = {}) {
       timestamp: Date.now()
     });
     console.log("[serial] recording stopped, source:", source);
+    // Auto-save + upload complete session to Piko backend
+    setImmediate(() => {
+      finalizeAndUploadSession(source).catch((err) => {
+        console.error("[session] finalize error:", err.message || err);
+      });
+    });
   }
 
   broadcast({
@@ -435,7 +603,7 @@ function handlePcmFrame(frameBuf) {
       type: "bridge",
       status: "connected",
       pcm: true,
-      sampleRate: 16000,
+      sampleRate: SAMPLE_RATE,
       timestamp: Date.now()
     });
   }
@@ -444,11 +612,13 @@ function handlePcmFrame(frameBuf) {
     console.log(`[serial] pcm frame #${pcmFrameCount} seq=${seq} samples=${count}`);
   }
 
+  sessionPcmChunks.push(Buffer.from(pcm));
+
   // PCM payload is base64 in JSON — never broadcast raw binary as a string.
   broadcast({
     type: "pcm",
     seq,
-    sampleRate: 16000,
+    sampleRate: SAMPLE_RATE,
     samples: count,
     data: pcm.toString("base64"),
     timestamp: Date.now()
@@ -532,11 +702,12 @@ function attachSerialHandlers() {
     console.log(`[serial] open ${SERIAL_PORT} @ ${BAUD_RATE}`);
     byteBuffer = Buffer.alloc(0);
     textRemainder = "";
+    sendTft("ready");
     broadcast({
       type: "bridge",
       status: "serial_open",
       pcm: devicePcmCapable,
-      sampleRate: 16000,
+      sampleRate: SAMPLE_RATE,
       serialOpen: true,
       serialPort: SERIAL_PORT,
       serialBaud: BAUD_RATE,

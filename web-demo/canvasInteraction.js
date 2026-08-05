@@ -499,7 +499,13 @@ class CanvasInteraction {
   }
 
   isPikoCanvasMode() {
-    return !!document.getElementById("analysisView")?.classList.contains("piko-canvas-mode");
+    // Piko 产品流：analysis 可见时一律 Figma 圆角白画板，
+    // 不再画旧 Color Palette / Sound Breathing 分栏（否则会叠在白纸里）
+    var view = document.getElementById("analysisView");
+    if (!view) return false;
+    if (view.classList.contains("hidden")) return false;
+    if (getComputedStyle(view).display === "none") return false;
+    return true;
   }
 
   updateAndDraw(visualParameters, personalityVector, aiResult) {

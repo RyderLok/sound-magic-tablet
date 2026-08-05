@@ -231,6 +231,13 @@ class Esp32AudioAdapter {
       return;
     }
 
+    if (parsed.type === "session") {
+      if (typeof this.onSession === "function") {
+        this.onSession(parsed);
+      }
+      return;
+    }
+
     if (parsed.type === "hw_record") {
       if (typeof this.onHardwareRecord === "function") {
         this.onHardwareRecord(parsed);

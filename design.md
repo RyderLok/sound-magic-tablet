@@ -194,6 +194,7 @@ Figma 未建 Variables，以下为界面实测采样值，落地请统一走 CSS
 |---|------|------|------|------|
 | 1 | Splash | `1:3` | 橙 | 品牌启动：Logo + Slogan |
 | 2 | Collect | `1:14` | 白 | 插录音器；Draw · Input · Gallery |
+| 2b | Collect Transfer | `59:83` | 白+黄丘 | Input 后：P2 设备进度 + P3 笔 + 当前声音波形 → My sounds |
 | 3 | My sounds | `1:49` | 白 | 勾选 1–5 段 → Next Step |
 | 4 | Transform | `1:288` | 白 | 声→笔刷魔法动画 |
 | 5 | Sound Brush | `1:352` | 白 | 列表 + 预览 + Use Brush / 加色盘 |
@@ -202,7 +203,8 @@ Figma 未建 Variables，以下为界面实测采样值，落地请统一走 CSS
 | 8 | Gallery Select | `1:644` | 白 | 多选 + Print |
 | 9 | Printing | `1:314` | 白 | 打印中动画 |
 
-**主线：** `1 → 2 → 3 → 4 → 5 → 6`；图库支线 `7 ↔ 8 → 9`。色盘上限 **5**（与「画板最多 5 段」一致）。
+**主线：** `1 → 2 → 2b → 3 → 4 → 5 → 6`；图库支线 `7 ↔ 8 → 9`。色盘上限 **5**（与「画板最多 5 段」一致）。
+- **2b：** Collect 点 Input → 上传进度（打断确认「确认要终止吗？」）→ 完成进 My sounds。
 
 ---
 
@@ -228,6 +230,22 @@ Figma 未建 Variables，以下为界面实测采样值，落地请统一走 CSS
 | 侧磁贴 Draw | `(-17,262)` 312×312 圆角 89 opacity .8 |
 | 序号角标 | 白圈 Ø27–30 + 橙数字 |
 | 底部状态 | `Waiting for recorder...` 居中 `top:610` 24 `#CACACA` |
+
+### 7.2b Collect Transfer `59:83`
+| 元素 | 值 |
+|------|----|
+| 背景 | 白 `#FFFFFF` |
+| 黄丘 Ellipse 61 | `(-21,445)` Ø1095 `#FDBF42` |
+| 返回钮 Ellipse 53 | `(31,60)` Ø61 橙 + `--piko-shadow` |
+| 标题 Collect | `(465,53)` 126×43，36 Bold 橙 |
+| 录音笔 Group 115 | `(283,153)` 75×88，`drop-shadow(0 0 10px rgba(0,0,0,.25))` |
+| 虚线 Line 1 | `(319.5,248)` 长 97，`3px dashed #FDBF42`，`rotate(90deg)` |
+| 波形 Union | `(398.46,173.46)` 282.09×47.67，竖条，渐变 `#F16E1C→#FDBF42`（对应当前上传声音） |
+| 设备 Group 116 | `(272,285)` 509×384，同 drop-shadow |
+| 屏幕 | 相对画布 `left:33.59%` `right:31.11%` `top:40.3%` `bottom:24.15%`，深灰 + 橙描边 |
+| 进度字 | `(473,438)` 133×77，Pixelify Sans 64 SemiBold 白 |
+| 底文案 | `(391,699)` `Sending your sounds…` 24 SemiBold 白 |
+| 交互 | 返回 → 确认终止；完成 → My sounds |
 
 ### 7.3 My sounds `1:49`
 | 元素 | 值 |

@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include <string.h>
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
 
 // =====================================================
 // INMP441 接线
@@ -32,6 +35,34 @@
 
 // 软件消抖时间
 #define BUTTON_DEBOUNCE_MS 40
+
+// =====================================================
+// ST7735 128×160 SPI TFT（避开 I2S / 按钮脚）
+// CS=5  DC=16  RST=17  MOSI=23  SCLK=18  BL=4
+// VCC=3.3V  GND=GND
+// =====================================================
+#define TFT_CS   5
+#define TFT_DC   16
+#define TFT_RST  17
+#define TFT_MOSI 23
+#define TFT_SCLK 18
+#define TFT_BL   4
+
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+
+enum TftState {
+  TFT_STATE_READY = 0,
+  TFT_STATE_RECORDING,
+  TFT_STATE_SAVING,
+  TFT_STATE_UPLOADING,
+  TFT_STATE_DONE,
+  TFT_STATE_ERROR
+};
+
+TftState tftState = TFT_STATE_READY;
+unsigned long tftStateSince = 0;
+#define TFT_UPLOAD_TIMEOUT_MS 20000
+#define TFT_DONE_HOLD_MS 2500
 
 // =====================================================
 // 音频参数
@@ -79,8 +110,84 @@ unsigned long lastMetricsTime = 0;
 // =====================================================
 // 串口命令缓冲区
 // =====================================================
-char commandBuffer[32];
+char commandBuffer[48];
 size_t commandLength = 0;
+
+// =====================================================
+// TFT 状态显示
+// =====================================================
+const char *tftStateLabel(TftState state) {
+  switch (state) {
+    case TFT_STATE_RECORDING: return "Recording";
+    case TFT_STATE_SAVING: return "Saving";
+    case TFT_STATE_UPLOADING: return "Uploading";
+    case TFT_STATE_DONE: return "Done";
+    case TFT_STATE_ERROR: return "Error";
+    case TFT_STATE_READY:
+    default: return "Ready";
+  }
+}
+
+uint16_t tftStateColor(TftState state) {
+  switch (state) {
+    case TFT_STATE_RECORDING: return ST77XX_RED;
+    case TFT_STATE_SAVING: return ST77XX_YELLOW;
+    case TFT_STATE_UPLOADING: return ST77XX_CYAN;
+    case TFT_STATE_DONE: return ST77XX_GREEN;
+    case TFT_STATE_ERROR: return ST77XX_MAGENTA;
+    case TFT_STATE_READY:
+    default: return ST77XX_WHITE;
+  }
+}
+
+void showTftState(TftState state) {
+  tftState = state;
+  tftStateSince = millis();
+
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+  tft.setTextSize(2);
+  tft.setTextColor(tftStateColor(state));
+
+  const char *label = tftStateLabel(state);
+  int16_t x1, y1;
+  uint16_t w, h;
+  tft.getTextBounds(label, 0, 0, &x1, &y1, &w, &h);
+  int16_t x = (int16_t)((tft.width() - (int)w) / 2);
+  int16_t y = (int16_t)((tft.height() - (int)h) / 2);
+  if (x < 0) x = 2;
+  if (y < 0) y = 2;
+  tft.setCursor(x, y);
+  tft.print(label);
+}
+
+void setupTft() {
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL, HIGH);
+  // Many 128x160 red-tab modules use INITR_BLACKTAB / INITR_GREENTAB;
+  // BLACKTAB is the safest default — change if colors look inverted.
+  tft.initR(INITR_BLACKTAB);
+  tft.setRotation(1); // landscape 160×128
+  tft.fillScreen(ST77XX_BLACK);
+  showTftState(TFT_STATE_READY);
+}
+
+void pollTftTimeouts() {
+  unsigned long now = millis();
+  if (
+    tftState == TFT_STATE_UPLOADING &&
+    now - tftStateSince >= TFT_UPLOAD_TIMEOUT_MS
+  ) {
+    showTftState(TFT_STATE_ERROR);
+    return;
+  }
+  if (
+    tftState == TFT_STATE_DONE &&
+    now - tftStateSince >= TFT_DONE_HOLD_MS
+  ) {
+    showTftState(TFT_STATE_READY);
+  }
+}
 
 // =====================================================
 // 将 INMP441 32-bit I2S 数据转换为 PCM16
@@ -137,6 +244,7 @@ void setRecording(bool enabled, const char *source) {
     seq = 0;
     recording = true;
     lastMetricsTime = millis();
+    showTftState(TFT_STATE_RECORDING);
 
     return;
   }
@@ -152,6 +260,8 @@ void setRecording(bool enabled, const char *source) {
   Serial.flush();
 
   lastMetricsTime = millis();
+  // Bridge will drive Saving → Uploading → Done/Error via TFT_* commands
+  showTftState(TFT_STATE_SAVING);
 }
 
 // =====================================================
@@ -371,6 +481,31 @@ void handleSerialCommand(const char *command) {
 
     return;
   }
+
+  if (strcmp(command, "TFT_READY") == 0) {
+    if (!recording) showTftState(TFT_STATE_READY);
+    return;
+  }
+  if (strcmp(command, "TFT_RECORDING") == 0) {
+    showTftState(TFT_STATE_RECORDING);
+    return;
+  }
+  if (strcmp(command, "TFT_SAVING") == 0) {
+    showTftState(TFT_STATE_SAVING);
+    return;
+  }
+  if (strcmp(command, "TFT_UPLOADING") == 0) {
+    showTftState(TFT_STATE_UPLOADING);
+    return;
+  }
+  if (strcmp(command, "TFT_DONE") == 0) {
+    showTftState(TFT_STATE_DONE);
+    return;
+  }
+  if (strcmp(command, "TFT_ERROR") == 0) {
+    showTftState(TFT_STATE_ERROR);
+    return;
+  }
 }
 
 // =====================================================
@@ -571,6 +706,8 @@ void setup() {
 
   delay(1000);
 
+  setupTft();
+
   // 当前按钮已确认按下为 LOW，
   // 因此使用内部上拉。
   pinMode(
@@ -588,6 +725,7 @@ void setup() {
     millis();
 
   if (!setupI2S()) {
+    showTftState(TFT_STATE_ERROR);
     while (true) {
       delay(1000);
     }
@@ -602,7 +740,9 @@ void setup() {
     "\"rate\":16000,"
     "\"frame_samples\":512,"
     "\"button\":true,"
-    "\"button_pin\":25}"
+    "\"button_pin\":25,"
+    "\"tft\":true,"
+    "\"tft_driver\":\"ST7735\"}"
   );
 }
 
@@ -612,6 +752,7 @@ void setup() {
 void loop() {
   pollSerial();
   pollButton();
+  pollTftTimeouts();
 
   bool recordingAtReadStart =
     recording;
@@ -623,6 +764,7 @@ void loop() {
   // 结束后再次检查命令和按钮。
   pollSerial();
   pollButton();
+  pollTftTimeouts();
 
   if (sampleCount <= 0) {
     delay(1);

@@ -12,16 +12,18 @@
   var screens = {
     splash: 'splashView',
     collect: 'collectView',
+    transfer: 'transferView',
     sounds: 'soundsView',
     magic: 'magicView',
     brush: 'brushView',
     gallery: 'galleryView',
+    printing: 'printingView',
     analysis: 'analysisView'
   };
 
   // 主流程顺序，用来判断这次切屏是前进还是后退
   var FLOW = [
-    'splash', 'collect', 'sounds', 'magic', 'brush', 'analysis', 'gallery'
+    'splash', 'collect', 'transfer', 'sounds', 'magic', 'brush', 'analysis', 'gallery', 'printing'
   ];
 
   var ANIM_CLASSES = [
@@ -125,7 +127,8 @@
   /** Collect 中央磁贴进入对应流程（由轮播脚本在点中心卡时调用） */
   function goCollect(target) {
     if (target === 'input') {
-      show('sounds');
+      // Input → 录音笔上传页 → 完成后进 My Sounds
+      show('transfer');
     } else if (target === 'draw') {
       var hasBrushes = window.PlateManager && window.PlateManager.count() > 0;
       if (hasBrushes && window.App && typeof window.App.enterPlateStudio === 'function') {
@@ -171,7 +174,7 @@
       tip = 0;
       target.classList.remove('is-ready');
       target.textContent = '';
-      target.appendChild(document.createTextNode('Waiting for recorder'));
+      target.appendChild(document.createTextNode('Waiting for Recorder'));
       dotsEl = document.createElement('span');
       dotsEl.className = 'collect-status-dots';
       dotsEl.textContent = DOTS[0];
@@ -187,7 +190,7 @@
       if (connected) {
         stopDots();
         target.classList.add('is-ready');
-        target.textContent = 'Recorder ready';
+        target.textContent = 'Recorder is Ready!';
       } else {
         startDots();
       }

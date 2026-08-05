@@ -246,14 +246,36 @@ const App = {
     PlateManager.activeBrushId = active.id;
     this.selectedSampleId = active.id;
 
+    // 与 P1/P2 预览「所见即所得」对齐：画板直接用样本自己的 visualParams
+    // （原始 palette + strokePattern），不再用 applyFromFeatures 重算颜色/笔形，
+    // 否则画板会变成 archetype 重生成的绿色十字散点，与预览的粉色柔团不一致。
     window.activeVisualParams = visualParams;
-    if (active.pythonAnalysis && typeof NaturalSoundArchetypes !== "undefined") {
-      NaturalSoundArchetypes.applyFromFeatures({
-        analysisExport: active.pythonAnalysis,
-        features: active.features
-      });
-      window.activeVisualParams = window.activeFusedVisualParams || window.activeVisualParams;
+    window.activeFusedVisualParams = visualParams;
+    window.activeVisualStructure = {
+      strokePattern: active.visualParams?.strokePattern,
+      motionModel: active.visualParams?.motionModel,
+      texturePattern: active.visualParams?.texturePattern
+    };
+    // 关键：brush 参数与预览用同一套 BrushSchema，避免沿用上一次预览/默认值。
+    if (typeof BrushSchema !== "undefined" &&
+        typeof BrushSchema.fromVisualAndModifiers === "function") {
+      window.activeBrushParams = BrushSchema.fromVisualAndModifiers(
+        active.visualParams || {},
+        active.styleModifiers || {},
+        active.features || {}
+      );
     }
+    window.activeAcousticFeatures = active.features || null;
+    if (window.brushGenerator) {
+      if (typeof window.brushGenerator.resetInkColor === "function" &&
+          visualParams.palette && visualParams.palette.length) {
+        window.brushGenerator.resetInkColor(visualParams.palette[0]);
+      }
+      if (typeof window.brushGenerator.clear === "function") {
+        window.brushGenerator.clear();
+      }
+    }
+
     window.activePersonality = active.aiResult?.personality || this.defaultPersonality;
     window.activeAiResult = active.aiResult;
     window.activeAudioFeatures = active.features;
@@ -306,10 +328,15 @@ const App = {
     this.renderBrushStrip();
     this.renderPlateInterpretationPanel(active, samples.length);
 
+    // 必须打开 Figma 画板顶栏；否则 p5 会退回旧 Color Palette / Sound Breathing 布局
+    if (window.PikoCanvasScreen && typeof window.PikoCanvasScreen.activate === "function") {
+      window.PikoCanvasScreen.activate();
+    }
+
     requestAnimationFrame(() => {
       const holder = document.getElementById("canvasHolder");
       if (holder && typeof resizeCanvas === "function") {
-        resizeCanvas(holder.offsetWidth || 600, holder.offsetHeight || 500);
+        resizeCanvas(holder.offsetWidth || 880, holder.offsetHeight || 623);
         if (this.canvasInteraction) this.canvasInteraction.resize();
       }
     });
@@ -524,7 +551,8 @@ const App = {
 
     const baseName = options.displayName || file.name.replace(/\.[^.]+$/, "");
     const sample = {
-      id: "s" + Date.now() + Math.random().toString(36).slice(2),
+      id: options.backendId || ("s" + Date.now() + Math.random().toString(36).slice(2)),
+      backendId: options.backendId || null,
       name: baseName,
       fileName: file.name,
       file,
@@ -543,6 +571,12 @@ const App = {
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
+
+    // Avoid duplicate backend sounds
+    if (options.backendId) {
+      const dup = this.soundLibrary.find((s) => s.backendId === options.backendId || s.id === options.backendId);
+      if (dup) return dup;
+    }
 
     this.soundLibrary.unshift(sample);
     this.persistSample(sample);

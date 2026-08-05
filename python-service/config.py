@@ -54,3 +54,16 @@ SILICONFLOW_OMNI_MODEL = os.environ.get(
 SILICONFLOW_BASE_URL = os.environ.get(
     "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
 )
+
+# Supabase Sounds (optional — local disk fallback when unset)
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+SUPABASE_SOUNDS_BUCKET = (os.environ.get("SUPABASE_SOUNDS_BUCKET") or "sounds").strip() or "sounds"
+
+LOCAL_SOUNDS_DIR = _ROOT / "sounds"
+LOCAL_SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
+LOCAL_SOUNDS_INDEX = LOCAL_SOUNDS_DIR / "index.json"
+
+
+def supabase_configured() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)

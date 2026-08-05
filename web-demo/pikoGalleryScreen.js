@@ -7,6 +7,7 @@
   var objectUrls = [];
   var selectMode = false;
   var selectedIds = {};
+  var renderToken = 0;
 
   function el(id) { return document.getElementById(id); }
 
@@ -44,6 +45,11 @@
     }
     if (bar) bar.classList.toggle('hidden', !selectMode);
     if (countEl) countEl.textContent = selectedCount() + ' selected';
+    var printBtn = el('galleryPrintBtn');
+    if (printBtn) {
+      printBtn.classList.toggle('hidden', !selectMode);
+      printBtn.disabled = selectedCount() < 1;
+    }
   }
 
   function setSelectMode(on) {
@@ -84,12 +90,16 @@
     var grid = el('galleryGrid');
     if (!grid) return;
 
+    var token = ++renderToken;
     revokeUrls();
     grid.innerHTML = '';
 
     if (!window.GalleryStore) return;
 
     var list = await window.GalleryStore.list();
+    // 期间又触发了新一轮 render：丢掉这份过期结果，避免叠两套卡
+    if (token !== renderToken) return;
+
     if (!list.length) {
       setSelectMode(false);
       return;
@@ -146,6 +156,15 @@
       del.addEventListener('click', function () {
         if (!selectedCount()) return;
         deleteSelected();
+      });
+    }
+
+    var printBtn = el('galleryPrintBtn');
+    if (printBtn && !printBtn.dataset.bound) {
+      printBtn.dataset.bound = '1';
+      printBtn.addEventListener('click', function () {
+        if (selectedCount() < 1) return;
+        if (window.PikoRouter) window.PikoRouter.show('printing');
       });
     }
 
