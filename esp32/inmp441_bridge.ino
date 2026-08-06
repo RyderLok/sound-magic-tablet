@@ -38,12 +38,13 @@
 
 // =====================================================
 // ST7735 128×160 SPI TFT（避开 I2S / 按钮脚）
-// CS=5  DC=16  RST=17  MOSI=23  SCLK=18  BL=4
+// 部分 DevKit 无 GPIO16/17 引出，改用 26/27
+// CS=5  DC=26  RST=27  MOSI=23  SCLK=18  BL=4
 // VCC=3.3V  GND=GND
 // =====================================================
 #define TFT_CS   5
-#define TFT_DC   16
-#define TFT_RST  17
+#define TFT_DC   26
+#define TFT_RST  27
 #define TFT_MOSI 23
 #define TFT_SCLK 18
 #define TFT_BL   4
