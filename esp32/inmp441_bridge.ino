@@ -5,6 +5,94 @@
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <LittleFS.h>
+
+// Local only (gitignored). Copy from wifi_secrets.h.example if missing.
+#include "wifi_secrets.h"
+
+#ifndef WIFI_UPLOAD_HOST
+#define WIFI_UPLOAD_HOST ""
+#endif
+#ifndef WIFI_UPLOAD_PORT
+#define WIFI_UPLOAD_PORT 8001
+#endif
+// 1 = skip USB PCM frames (Wi‑Fi-first / no Bridge). Serial JSON/cmds still work.
+#ifndef WIFI_DISABLE_USB_PCM
+#define WIFI_DISABLE_USB_PCM 0
+#endif
+#ifndef WIFI_UPLOAD_MAX_ATTEMPTS
+#define WIFI_UPLOAD_MAX_ATTEMPTS 3
+#endif
+// Probe .1 .. this octet for Python :8001 (fixed WIFI_UPLOAD_HOST preferred).
+#ifndef WIFI_SCAN_LAST_OCTET
+#define WIFI_SCAN_LAST_OCTET 60
+#endif
+#ifndef WIFI_HTTP_PORT
+#define WIFI_HTTP_PORT 8080
+#endif
+
+// =====================================================
+// Wi‑Fi（手机热点 STA；录完经 Wi‑Fi POST PCM → Mac/Python）
+// 热点须 2.4GHz；iPhone 打开「最大兼容性」
+// 同热点设备须跑 python-service :8001（bind 0.0.0.0）
+// HTTP 控制面 :8080 — GET /status  POST /record/start|stop
+// =====================================================
+#define WIFI_CONNECT_TIMEOUT_MS 30000UL
+#define WIFI_RETRY_INTERVAL_MS 20000UL
+#define WIFI_REC_PATH "/rec.pcm"
+
+WebServer wifiHttp(WIFI_HTTP_PORT);
+bool wifiHttpStarted = false;
+bool wifiUploadQueued = false;
+
+// Non-blocking Wi‑Fi upload (button/serial/HTTP stop all queue; loop advances).
+enum WifiUploadPhase : uint8_t {
+  WIFI_UP_IDLE = 0,
+  WIFI_UP_PREPARE,
+  WIFI_UP_DISCOVER,
+  WIFI_UP_POST,
+  WIFI_UP_RETRY_WAIT,
+};
+WifiUploadPhase wifiUpPhase = WIFI_UP_IDLE;
+int wifiUpAttempt = 0;
+unsigned long wifiUpRetryAt = 0;
+// Incremental LAN discover (must not block loop for tens of seconds).
+uint8_t wifiDiscStage = 0; // 0=gateway 1=prefer 2=scan
+int wifiDiscPreferIdx = 0;
+int wifiDiscScanI = 1;
+#ifndef WIFI_DISCOVER_PROBES_PER_TICK
+#define WIFI_DISCOVER_PROBES_PER_TICK 4
+#endif
+#ifndef WIFI_UPLOAD_CONNECT_MS
+#define WIFI_UPLOAD_CONNECT_MS 3000
+#endif
+#ifndef WIFI_UPLOAD_TIMEOUT_MS
+#define WIFI_UPLOAD_TIMEOUT_MS 15000
+#endif
+#ifndef WIFI_UPLOAD_RETRY_GAP_MS
+#define WIFI_UPLOAD_RETRY_GAP_MS 300
+#endif
+
+bool wifiReady = false;
+unsigned long wifiLastAttemptMs = 0;
+IPAddress wifiIp;
+char wifiStatusLine[28] = "WiFi: …";
+char wifiUploadHost[32] = "";
+bool wifiFsReady = false;
+File wifiRecFile;
+bool wifiRecOpen = false;
+uint32_t wifiRecBytes = 0;
+
+// Live metrics snapshot for Wi‑Fi GET /metrics (webpage waveform without USB).
+float wifiLiveVolumePct = 0.0f;
+int32_t wifiLivePeak = 0;
+float wifiLiveLevel = 0.0f;
+bool wifiLiveSound = false;
+unsigned long wifiLiveAtMs = 0;
 
 // =====================================================
 // INMP441 接线
@@ -444,10 +532,462 @@ void showTftState(TftState state) {
   tft.getTextBounds(label, 0, 0, &x1, &y1, &w, &h);
   int16_t x = (int16_t)((tft.width() - (int)w) / 2);
   int16_t y = (int16_t)((tft.height() - (int)h) / 2);
+  if (state == TFT_STATE_READY) {
+    // Leave room for Wi‑Fi line under Ready
+    y = (int16_t)((tft.height() - (int)h) / 2 - 10);
+  }
   if (x < 0) x = 2;
   if (y < 0) y = 2;
   tft.setCursor(x, y);
   tft.print(label);
+
+  if (state == TFT_STATE_READY) {
+    tft.setTextSize(1);
+    tft.setTextColor(wifiReady ? ST77XX_GREEN : ST77XX_YELLOW);
+    tft.setCursor(4, (int16_t)(y + (int)h + 10));
+    tft.print(wifiStatusLine);
+  }
+}
+
+bool wifiSecretsConfigured() {
+  return WIFI_SSID[0] != '\0'
+    && strcmp(WIFI_SSID, "YOUR_HOTSPOT_NAME") != 0
+    && strcmp(WIFI_SSID, "YOUR_WIFI_NAME") != 0;
+}
+
+void wifiLogScanHint() {
+  Serial.println("[wifi] scanning 2.4GHz…");
+  int n = WiFi.scanNetworks(/*async=*/false, /*hidden=*/true);
+  bool seen = false;
+  for (int i = 0; i < n; i++) {
+    String ssid = WiFi.SSID(i);
+    Serial.printf("[wifi] saw \"%s\" rssi=%d\n", ssid.c_str(), WiFi.RSSI(i));
+    if (ssid == WIFI_SSID) seen = true;
+  }
+  if (n <= 0) {
+    Serial.println("[wifi] scan empty — enable hotspot Maximize Compatibility (2.4GHz)");
+  } else if (!seen) {
+    Serial.printf("[wifi] SSID \"%s\" not in scan — check name / 2.4GHz\n", WIFI_SSID);
+  } else {
+    Serial.println("[wifi] SSID visible but join failed — check password");
+  }
+  WiFi.scanDelete();
+}
+
+bool connectWifiSta(bool force) {
+  if (!wifiSecretsConfigured()) {
+    wifiReady = false;
+    snprintf(wifiStatusLine, sizeof(wifiStatusLine), "WiFi: no secrets");
+    Serial.println("[wifi] missing wifi_secrets.h values");
+    return false;
+  }
+
+  unsigned long now = millis();
+  if (!force && wifiLastAttemptMs != 0
+      && (now - wifiLastAttemptMs) < WIFI_RETRY_INTERVAL_MS) {
+    return wifiReady;
+  }
+  wifiLastAttemptMs = now;
+
+  snprintf(wifiStatusLine, sizeof(wifiStatusLine), "WiFi: connecting");
+  if (tftState == TFT_STATE_READY) showTftState(TFT_STATE_READY);
+
+  Serial.printf("[wifi] STA connecting to \"%s\" …\n", WIFI_SSID);
+  Serial.print("{\"status\":\"wifi\",\"phase\":\"connecting\",\"ssid\":\"");
+  Serial.print(WIFI_SSID);
+  Serial.println("\"}");
+
+  // Match the working wifi_connect_probe path (no erase disconnect).
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  delay(200);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  unsigned long t0 = millis();
+  wl_status_t st = WL_IDLE_STATUS;
+  while ((millis() - t0) < WIFI_CONNECT_TIMEOUT_MS) {
+    st = WiFi.status();
+    if (st == WL_CONNECTED) break;
+    delay(400);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (st != WL_CONNECTED) {
+    wifiReady = false;
+    snprintf(wifiStatusLine, sizeof(wifiStatusLine), "WiFi: fail %d", (int)st);
+    Serial.printf("[wifi] STA failed status=%d\n", (int)st);
+    Serial.print(
+      "{\"status\":\"wifi\",\"ok\":false,\"reason\":\"sta_failed\",\"code\":"
+    );
+    Serial.print((int)st);
+    Serial.println("}");
+    wifiLogScanHint();
+    if (tftState == TFT_STATE_READY) showTftState(TFT_STATE_READY);
+    return false;
+  }
+
+  wifiReady = true;
+  wifiIp = WiFi.localIP();
+  snprintf(wifiStatusLine, sizeof(wifiStatusLine), "WiFi %s", wifiIp.toString().c_str());
+  Serial.println("[wifi] WiFi OK (STA)");
+  Serial.print("[wifi] IP  ");
+  Serial.println(wifiIp);
+  Serial.printf("[wifi] RSSI %d dBm\n", WiFi.RSSI());
+  Serial.print("{\"status\":\"wifi\",\"ok\":true,\"ip\":\"");
+  Serial.print(wifiIp);
+  Serial.print("\",\"rssi\":");
+  Serial.print(WiFi.RSSI());
+  Serial.println("}");
+  wifiInitFs();
+  // Do not full-scan LAN here (blocks button/loop). Prefer fixed host; else upload poll discovers.
+  if (WIFI_UPLOAD_HOST[0] != '\0') {
+    strncpy(wifiUploadHost, WIFI_UPLOAD_HOST, sizeof(wifiUploadHost) - 1);
+    wifiUploadHost[sizeof(wifiUploadHost) - 1] = '\0';
+    if (wifiProbeHealth(wifiUploadHost)) {
+      Serial.printf("[wifi] upload host (fixed) %s OK\n", wifiUploadHost);
+      snprintf(wifiStatusLine, sizeof(wifiStatusLine), "Up %s", wifiUploadHost);
+    } else {
+      Serial.printf("[wifi] fixed host %s not reachable yet\n", wifiUploadHost);
+      wifiUploadHost[0] = '\0';
+    }
+  }
+  setupWifiHttpServer();
+  if (tftState == TFT_STATE_READY) showTftState(TFT_STATE_READY);
+  return true;
+}
+
+void pollWifi() {
+  if (!wifiSecretsConfigured()) return;
+  if (recording) return; // don't reconnect mid-record
+
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!wifiReady) {
+      wifiReady = true;
+      wifiIp = WiFi.localIP();
+      snprintf(wifiStatusLine, sizeof(wifiStatusLine), "WiFi %s", wifiIp.toString().c_str());
+      if (tftState == TFT_STATE_READY) showTftState(TFT_STATE_READY);
+    }
+    return;
+  }
+
+  if (wifiReady) {
+    wifiReady = false;
+    wifiUploadHost[0] = '\0';
+    snprintf(wifiStatusLine, sizeof(wifiStatusLine), "WiFi: offline");
+    if (tftState == TFT_STATE_READY) showTftState(TFT_STATE_READY);
+  }
+  connectWifiSta(false);
+}
+
+bool wifiProbeHealth(const char *host) {
+  if (!host || !host[0]) return false;
+  HTTPClient http;
+  String url = String("http://") + host + ":" + String(WIFI_UPLOAD_PORT) + "/health";
+  http.setConnectTimeout(600);
+  http.setTimeout(800);
+  if (!http.begin(url)) return false;
+  int code = http.GET();
+  http.end();
+  return code == 200;
+}
+
+void wifiDiscoverReset() {
+  wifiDiscStage = 0;
+  wifiDiscPreferIdx = 0;
+  wifiDiscScanI = 1;
+}
+
+// Returns 1=found, 0=need more ticks, -1=exhausted.
+int wifiDiscoverUploadHostStep(int maxProbes) {
+  if (maxProbes < 1) maxProbes = 1;
+  IPAddress gw = WiFi.gatewayIP();
+  IPAddress local = WiFi.localIP();
+  char cand[32];
+  static const int kPrefer[] = { 2, 3, 4, 5, 10, 20, 50, 100 };
+  const int preferN = (int)(sizeof(kPrefer) / sizeof(kPrefer[0]));
+  int probes = 0;
+
+  if (wifiDiscStage == 0) {
+    if (WIFI_UPLOAD_HOST[0] != '\0') {
+      strncpy(wifiUploadHost, WIFI_UPLOAD_HOST, sizeof(wifiUploadHost) - 1);
+      wifiUploadHost[sizeof(wifiUploadHost) - 1] = '\0';
+      probes++;
+      if (wifiProbeHealth(wifiUploadHost)) {
+        Serial.printf("[wifi] upload host (fixed) %s OK\n", wifiUploadHost);
+        return 1;
+      }
+      Serial.printf("[wifi] fixed host %s not reachable\n", wifiUploadHost);
+      wifiUploadHost[0] = '\0';
+    }
+    snprintf(cand, sizeof(cand), "%u.%u.%u.%u", gw[0], gw[1], gw[2], gw[3]);
+    Serial.printf("[wifi] probing upload hosts on %u.%u.%u.*\n", local[0], local[1], local[2]);
+    probes++;
+    if (wifiProbeHealth(cand)) {
+      strncpy(wifiUploadHost, cand, sizeof(wifiUploadHost) - 1);
+      Serial.printf("[wifi] upload host %s (gateway)\n", wifiUploadHost);
+      return 1;
+    }
+    wifiDiscStage = 1;
+    wifiDiscPreferIdx = 0;
+    if (probes >= maxProbes) return 0;
+  }
+
+  while (wifiDiscStage == 1 && probes < maxProbes) {
+    if (wifiDiscPreferIdx >= preferN) {
+      wifiDiscStage = 2;
+      wifiDiscScanI = 1;
+      break;
+    }
+    int i = kPrefer[wifiDiscPreferIdx++];
+    if (i == (int)local[3] || i == (int)gw[3]) continue;
+    snprintf(cand, sizeof(cand), "%u.%u.%u.%d", local[0], local[1], local[2], i);
+    probes++;
+    if (wifiProbeHealth(cand)) {
+      strncpy(wifiUploadHost, cand, sizeof(wifiUploadHost) - 1);
+      Serial.printf("[wifi] upload host %s\n", wifiUploadHost);
+      return 1;
+    }
+  }
+
+  int scanMax = WIFI_SCAN_LAST_OCTET;
+  if (scanMax < 1) scanMax = 1;
+  if (scanMax > 254) scanMax = 254;
+  while (wifiDiscStage == 2 && probes < maxProbes) {
+    if (wifiDiscScanI > scanMax) {
+      Serial.println("[wifi] no Python :8001 on LAN — set WIFI_UPLOAD_HOST or join hotspot + run python-service");
+      return -1;
+    }
+    int i = wifiDiscScanI++;
+    if (i == (int)local[3]) continue;
+    snprintf(cand, sizeof(cand), "%u.%u.%u.%d", local[0], local[1], local[2], i);
+    probes++;
+    if (wifiProbeHealth(cand)) {
+      strncpy(wifiUploadHost, cand, sizeof(wifiUploadHost) - 1);
+      Serial.printf("[wifi] upload host %s\n", wifiUploadHost);
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+bool wifiDiscoverUploadHost() {
+  wifiUploadHost[0] = '\0';
+  wifiDiscoverReset();
+  for (;;) {
+    int r = wifiDiscoverUploadHostStep(WIFI_DISCOVER_PROBES_PER_TICK);
+    if (r == 1) return true;
+    if (r < 0) return false;
+    yield();
+  }
+}
+
+bool wifiInitFs() {
+  if (wifiFsReady) return true;
+  if (!LittleFS.begin(true)) {
+    Serial.println("[wifi] LittleFS mount failed");
+    wifiFsReady = false;
+    return false;
+  }
+  wifiFsReady = true;
+  Serial.println("[wifi] LittleFS ready");
+  return true;
+}
+
+void wifiCloseRecFile() {
+  if (wifiRecOpen) {
+    wifiRecFile.close();
+    wifiRecOpen = false;
+  }
+}
+
+bool wifiBeginRecordingCapture() {
+  wifiRecBytes = 0;
+  wifiCloseRecFile();
+  if (!wifiReady || WiFi.status() != WL_CONNECTED) return false;
+  // Do NOT sync-discover here — that blocks loop()/button for tens of seconds.
+  // Capture to LittleFS; host discovery runs in async upload poll.
+  if (!wifiInitFs()) return false;
+  LittleFS.remove(WIFI_REC_PATH);
+  wifiRecFile = LittleFS.open(WIFI_REC_PATH, FILE_WRITE);
+  if (!wifiRecFile) {
+    Serial.println("[wifi] open rec file failed");
+    return false;
+  }
+  wifiRecOpen = true;
+  Serial.println("[wifi] capturing PCM to LittleFS for upload");
+  return true;
+}
+
+void wifiAppendPcm(const int16_t *samples, int count) {
+  if (!wifiRecOpen || !samples || count <= 0) return;
+  size_t n = (size_t)count * sizeof(int16_t);
+  size_t w = wifiRecFile.write(reinterpret_cast<const uint8_t *>(samples), n);
+  wifiRecBytes += (uint32_t)w;
+}
+
+void wifiAnnounceToPython();
+void pollWifiUpload();
+
+bool wifiUploadRecordingOnce() {
+  if (!wifiInitFs()) return false;
+  if (!wifiUploadHost[0]) return false;
+
+  File f = LittleFS.open(WIFI_REC_PATH, FILE_READ);
+  if (!f || f.size() < 512) {
+    Serial.println("[wifi] rec file missing/small");
+    if (f) f.close();
+    return false;
+  }
+
+  String url = String("http://") + wifiUploadHost + ":" + String(WIFI_UPLOAD_PORT)
+    + "/sounds/upload_pcm?sample_rate=" + String(SAMPLE_RATE)
+    + "&source=esp32-wifi";
+
+  Serial.printf("[wifi] POST %s (%u bytes)\n", url.c_str(), (unsigned)f.size());
+  HTTPClient http;
+  http.setConnectTimeout(WIFI_UPLOAD_CONNECT_MS);
+  http.setTimeout(WIFI_UPLOAD_TIMEOUT_MS);
+  if (!http.begin(url)) {
+    Serial.println("[wifi] http.begin failed");
+    f.close();
+    return false;
+  }
+  http.addHeader("Content-Type", "application/octet-stream");
+  int code = http.sendRequest("POST", &f, f.size());
+  String body = http.getString();
+  http.end();
+  f.close();
+
+  Serial.printf("[wifi] upload HTTP %d %s\n", code, body.c_str());
+  return (code >= 200 && code < 300);
+}
+
+void wifiUploadAbort(bool ok, const char *statusLine) {
+  wifiUpPhase = WIFI_UP_IDLE;
+  wifiUploadQueued = false;
+  showTftState(ok ? TFT_STATE_DONE : TFT_STATE_ERROR);
+  if (statusLine && statusLine[0]) {
+    snprintf(wifiStatusLine, sizeof(wifiStatusLine), "%s", statusLine);
+  }
+  if (ok) {
+    LittleFS.remove(WIFI_REC_PATH);
+    wifiRecBytes = 0;
+  }
+}
+
+void wifiQueueUploadFromStop() {
+  wifiCloseRecFile();
+  bool haveData = (wifiRecBytes >= 512) || (wifiFsReady && LittleFS.exists(WIFI_REC_PATH));
+  if (!wifiReady || !haveData) {
+    if (!haveData) {
+      Serial.printf("[wifi] skip upload host=%s bytes=%u\n",
+                    wifiUploadHost[0] ? wifiUploadHost : "(none)", wifiRecBytes);
+    }
+    showTftState(TFT_STATE_READY);
+    return;
+  }
+  // If a previous upload is mid-flight, finish that path; queue another after.
+  wifiUploadQueued = true;
+  if (wifiUpPhase == WIFI_UP_IDLE) {
+    showTftState(TFT_STATE_SAVING);
+  }
+}
+
+// Advance one slice of upload work; returns quickly so pollButton keeps working.
+void pollWifiUpload() {
+  if (wifiUpPhase == WIFI_UP_IDLE) {
+    if (!wifiUploadQueued || recording) return;
+    wifiUploadQueued = false;
+    wifiUpPhase = WIFI_UP_PREPARE;
+    wifiUpAttempt = 0;
+  }
+
+  if (wifiUpPhase == WIFI_UP_PREPARE) {
+    wifiCloseRecFile();
+    if (!wifiReady) {
+      wifiUploadAbort(false, "Up: no wifi");
+      return;
+    }
+    if (wifiRecBytes < 512 && !(wifiFsReady && LittleFS.exists(WIFI_REC_PATH))) {
+      wifiUploadAbort(false, "Up: empty");
+      return;
+    }
+    // Refresh size from file if needed.
+    if (wifiFsReady && LittleFS.exists(WIFI_REC_PATH)) {
+      File f = LittleFS.open(WIFI_REC_PATH, FILE_READ);
+      if (f) {
+        wifiRecBytes = (uint32_t)f.size();
+        f.close();
+      }
+    }
+    if (wifiRecBytes < 512) {
+      wifiUploadAbort(false, "Up: empty");
+      return;
+    }
+    showTftState(TFT_STATE_UPLOADING);
+    wifiUpAttempt = 1;
+    if (wifiUploadHost[0] && wifiProbeHealth(wifiUploadHost)) {
+      wifiUpPhase = WIFI_UP_POST;
+    } else {
+      wifiUploadHost[0] = '\0';
+      wifiDiscoverReset();
+      wifiUpPhase = WIFI_UP_DISCOVER;
+    }
+    return;
+  }
+
+  if (wifiUpPhase == WIFI_UP_DISCOVER) {
+    int r = wifiDiscoverUploadHostStep(WIFI_DISCOVER_PROBES_PER_TICK);
+    if (r == 1) {
+      wifiUpPhase = WIFI_UP_POST;
+    } else if (r < 0) {
+      wifiUploadAbort(false, "Up: no host");
+    }
+    return;
+  }
+
+  if (wifiUpPhase == WIFI_UP_RETRY_WAIT) {
+    if (millis() < wifiUpRetryAt) return;
+    wifiUploadHost[0] = '\0';
+    wifiDiscoverReset();
+    wifiUpPhase = WIFI_UP_DISCOVER;
+    return;
+  }
+
+  if (wifiUpPhase == WIFI_UP_POST) {
+    int attempts = WIFI_UPLOAD_MAX_ATTEMPTS;
+    if (attempts < 1) attempts = 1;
+    Serial.printf("[wifi] upload attempt %d/%d\n", wifiUpAttempt, attempts);
+    bool ok = wifiUploadRecordingOnce();
+    // If a new recording cancelled the phase mid-POST, do not touch the new file.
+    if (wifiUpPhase != WIFI_UP_POST) {
+      Serial.println("[wifi] upload result discarded (cancelled)");
+      return;
+    }
+    if (ok) {
+      char line[40];
+      snprintf(line, sizeof(line), "Up OK %s", wifiUploadHost);
+      wifiUploadAbort(true, line);
+      wifiAnnounceToPython();
+      return;
+    }
+    if (wifiUpAttempt < attempts) {
+      wifiUpAttempt++;
+      wifiUpRetryAt = millis() + WIFI_UPLOAD_RETRY_GAP_MS;
+      wifiUpPhase = WIFI_UP_RETRY_WAIT;
+      return;
+    }
+    wifiUploadAbort(false, "Up FAIL");
+  }
+}
+
+// Legacy entry: enqueue only (never block loop).
+bool wifiUploadRecording() {
+  wifiQueueUploadFromStop();
+  return wifiUploadQueued || (wifiUpPhase != WIFI_UP_IDLE);
 }
 
 void setupTft() {
@@ -526,6 +1066,13 @@ void setRecording(bool enabled, const char *source) {
   }
 
   if (enabled) {
+    // New take cancels a queued/in-flight Wi‑Fi upload so button stays usable.
+    wifiUploadQueued = false;
+    if (wifiUpPhase != WIFI_UP_IDLE) {
+      wifiUpPhase = WIFI_UP_IDLE;
+      Serial.println("[wifi] upload cancelled — new recording");
+    }
+
     // 先发送开始事件
     sendRecordingEvent(true, source);
     Serial.flush();
@@ -535,6 +1082,7 @@ void setRecording(bool enabled, const char *source) {
     recordingStartedAt = millis();
     lastTimerSecShown = -1;
     lastMetricsTime = millis();
+    wifiBeginRecordingCapture();
     showTftState(TFT_STATE_RECORDING);
 
     return;
@@ -553,8 +1101,166 @@ void setRecording(bool enabled, const char *source) {
   Serial.flush();
 
   lastMetricsTime = millis();
-  // Bridge will drive Saving → Uploading → Done/Error via TFT_* commands
+  // Never block here — queue async Wi‑Fi upload so pollButton keeps running.
   showTftState(TFT_STATE_SAVING);
+  wifiQueueUploadFromStop();
+}
+
+void wifiUpdateLiveMetrics(int sampleCount) {
+  if (sampleCount <= 0) return;
+  int32_t peak = 0;
+  float level = computeVolume(pcmBuffer, sampleCount, peak);
+  float percent = (level / 32768.0f) * 100.0f;
+  if (percent > 100.0f) percent = 100.0f;
+  wifiLiveLevel = level;
+  wifiLivePeak = peak;
+  wifiLiveVolumePct = percent;
+  wifiLiveSound = peak > SOUND_THRESHOLD;
+  wifiLiveAtMs = millis();
+}
+
+// =====================================================
+// Wi‑Fi HTTP control plane (webpage live + start/stop, no USB Bridge)
+// GET  /status   /metrics
+// POST /record/start  /record/stop
+// =====================================================
+void wifiSendCors() {
+  wifiHttp.sendHeader("Access-Control-Allow-Origin", "*");
+  wifiHttp.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  wifiHttp.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  wifiHttp.sendHeader("Cache-Control", "no-store");
+}
+
+void handleWifiOptions() {
+  wifiSendCors();
+  wifiHttp.send(204);
+}
+
+void handleWifiStatus() {
+  wifiSendCors();
+  String json = "{";
+  json += "\"status\":\"ok\",";
+  json += "\"recording\":";
+  json += recording ? "true" : "false";
+  json += ",\"wifi\":";
+  json += wifiReady ? "true" : "false";
+  json += ",\"ip\":\"";
+  json += wifiIp.toString();
+  json += "\",\"uploadHost\":\"";
+  json += wifiUploadHost;
+  json += "\",\"httpPort\":";
+  json += String(WIFI_HTTP_PORT);
+  json += ",\"usbPcm\":";
+  json += WIFI_DISABLE_USB_PCM ? "false" : "true";
+  json += ",\"recBytes\":";
+  json += String(wifiRecBytes);
+  json += ",\"volume\":";
+  json += String(wifiLiveVolumePct, 2);
+  json += ",\"peak\":";
+  json += String(wifiLivePeak);
+  json += ",\"sound\":";
+  json += wifiLiveSound ? "true" : "false";
+  json += ",\"liveAt\":";
+  json += String(wifiLiveAtMs);
+  json += "}";
+  wifiHttp.send(200, "application/json", json);
+}
+
+void handleWifiMetrics() {
+  wifiSendCors();
+  String json = "{";
+  json += "\"type\":\"metrics\",";
+  json += "\"sound\":";
+  json += wifiLiveSound ? "true" : "false";
+  json += ",\"volume\":";
+  json += String(wifiLiveVolumePct, 2);
+  json += ",\"peak\":";
+  json += String((int)wifiLivePeak);
+  json += ",\"level\":";
+  json += String(wifiLiveLevel, 1);
+  json += ",\"recording\":";
+  json += recording ? "true" : "false";
+  json += ",\"recBytes\":";
+  json += String(wifiRecBytes);
+  json += ",\"t\":";
+  json += String(wifiLiveAtMs);
+  json += "}";
+  wifiHttp.send(200, "application/json", json);
+}
+
+void handleWifiRecordStart() {
+  wifiSendCors();
+  setRecording(true, "wifi_http");
+  wifiHttp.send(200, "application/json", "{\"ok\":true,\"recording\":true}");
+}
+
+void handleWifiRecordStop() {
+  wifiSendCors();
+  // Unified stop path (async upload) — respond immediately for browser.
+  if (recording) {
+    setRecording(false, "wifi_http");
+  } else {
+    wifiQueueUploadFromStop();
+  }
+  bool uploading = wifiUploadQueued || (wifiUpPhase != WIFI_UP_IDLE);
+  wifiHttp.send(200, "application/json",
+                uploading
+                  ? "{\"ok\":true,\"recording\":false,\"uploading\":true}"
+                  : "{\"ok\":true,\"recording\":false,\"uploading\":false}");
+}
+
+void wifiAnnounceToPython() {
+  if (!wifiReady || !wifiUploadHost[0]) return;
+  HTTPClient http;
+  String url = String("http://") + wifiUploadHost + ":" + String(WIFI_UPLOAD_PORT) + "/esp32/announce";
+  String body = String("{\"ip\":\"") + wifiIp.toString()
+    + "\",\"port\":" + String(WIFI_HTTP_PORT)
+    + ",\"recording\":" + (recording ? "true" : "false")
+    + "}";
+  http.setConnectTimeout(800);
+  http.setTimeout(1200);
+  if (!http.begin(url)) return;
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(body);
+  http.end();
+  Serial.printf("[wifi] announce → %s HTTP %d\n", wifiUploadHost, code);
+}
+
+void setupWifiHttpServer() {
+  if (wifiHttpStarted || !wifiReady) return;
+
+  wifiHttp.on("/status", HTTP_GET, handleWifiStatus);
+  wifiHttp.on("/status/", HTTP_GET, handleWifiStatus);
+  wifiHttp.on("/metrics", HTTP_GET, handleWifiMetrics);
+  wifiHttp.on("/metrics/", HTTP_GET, handleWifiMetrics);
+  wifiHttp.on("/record/start", HTTP_POST, handleWifiRecordStart);
+  wifiHttp.on("/record/start/", HTTP_POST, handleWifiRecordStart);
+  wifiHttp.on("/record/stop", HTTP_POST, handleWifiRecordStop);
+  wifiHttp.on("/record/stop/", HTTP_POST, handleWifiRecordStop);
+  wifiHttp.on("/record/start", HTTP_OPTIONS, handleWifiOptions);
+  wifiHttp.on("/record/stop", HTTP_OPTIONS, handleWifiOptions);
+  wifiHttp.on("/metrics", HTTP_OPTIONS, handleWifiOptions);
+  wifiHttp.on("/status", HTTP_OPTIONS, handleWifiOptions);
+  wifiHttp.on("/", HTTP_GET, handleWifiStatus);
+  wifiHttp.begin();
+  wifiHttpStarted = true;
+  Serial.printf("[wifi] HTTP control http://%s:%d/status\n",
+                wifiIp.toString().c_str(), WIFI_HTTP_PORT);
+
+  if (MDNS.begin("piko-esp")) {
+    MDNS.addService("http", "tcp", WIFI_HTTP_PORT);
+    Serial.println("[wifi] mDNS piko-esp.local");
+  } else {
+    Serial.println("[wifi] mDNS start failed (IP still works)");
+  }
+  wifiAnnounceToPython();
+}
+
+void pollWifiHttp() {
+  if (wifiHttpStarted) {
+    wifiHttp.handleClient();
+  }
+  pollWifiUpload();
 }
 
 // =====================================================
@@ -603,6 +1309,7 @@ void sendPcmFrame(int sampleCount) {
     return;
   }
 
+#if !WIFI_DISABLE_USB_PCM
   uint8_t header[7];
 
   header[0] = 0xA5;
@@ -633,6 +1340,9 @@ void sendPcmFrame(int sampleCount) {
     reinterpret_cast<const uint8_t *>(pcmBuffer),
     sampleCount * sizeof(int16_t)
   );
+#endif
+
+  wifiAppendPcm(pcmBuffer, sampleCount);
 
   seq++;
 }
@@ -682,27 +1392,20 @@ float computeVolume(
 // 按下通常为 0
 // =====================================================
 void printMetrics(int sampleCount) {
-  if (recording || sampleCount <= 0) {
+  if (sampleCount <= 0) {
     return;
   }
 
-  int32_t peak = 0;
+  wifiUpdateLiveMetrics(sampleCount);
 
-  float level = computeVolume(
-    pcmBuffer,
-    sampleCount,
-    peak
-  );
-
-  float percent =
-    (level / 32768.0f) * 100.0f;
-
-  if (percent > 100.0f) {
-    percent = 100.0f;
+  // USB serial metrics only when idle (avoid polluting PCM stream).
+  if (recording) {
+    return;
   }
 
-  bool soundDetected =
-    peak > SOUND_THRESHOLD;
+  int32_t peak = wifiLivePeak;
+  float percent = wifiLiveVolumePct;
+  bool soundDetected = wifiLiveSound;
 
   int buttonRaw =
     digitalRead(BUTTON_PIN);
@@ -1027,6 +1730,10 @@ void setup() {
     }
   }
 
+  // Wi‑Fi after I2S so recording still works if hotspot is off
+  connectWifiSta(true);
+  showTftState(TFT_STATE_READY);
+
   lastMetricsTime =
     millis();
 
@@ -1038,8 +1745,16 @@ void setup() {
     "\"button\":true,"
     "\"button_pin\":25,"
     "\"tft\":true,"
-    "\"tft_driver\":\"ST7735\"}"
+    "\"tft_driver\":\"ST7735\","
+    "\"wifi\":"
   );
+  Serial.print(wifiReady ? "true" : "false");
+  if (wifiReady) {
+    Serial.print(",\"wifi_ip\":\"");
+    Serial.print(wifiIp);
+    Serial.print("\"");
+  }
+  Serial.println("}");
 }
 
 // =====================================================
@@ -1050,6 +1765,8 @@ void loop() {
   pollButton();
   pollTftTimeouts();
   pollRecordingTimeout();
+  pollWifi();
+  pollWifiHttp();
 
   bool recordingAtReadStart =
     recording;
@@ -1078,6 +1795,8 @@ void loop() {
     ) {
       lastMetricsTime = currentTime;
       printMetrics(sampleCount);
+    } else {
+      wifiUpdateLiveMetrics(sampleCount);
     }
     return;
   }
@@ -1091,6 +1810,7 @@ void loop() {
     sendPcmFrame(
       sampleCount
     );
+    wifiUpdateLiveMetrics(sampleCount);
     // 用同一帧 INMP441 PCM 刷新 TFT 频谱（节流，不挡串口）
     updateSpectrumDisplay(
       pcmBuffer,
@@ -1101,6 +1821,7 @@ void loop() {
 
   // 读取期间刚开始录音，
   // 当前帧丢弃不发包，但仍可画频谱确认有输入。
+  wifiUpdateLiveMetrics(sampleCount);
   updateSpectrumDisplay(
     pcmBuffer,
     sampleCount

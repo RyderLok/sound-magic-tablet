@@ -13,5 +13,7 @@ if [ ! -x "$PY" ]; then
 fi
 
 cd "$ROOT"
-echo "Starting Python service on http://127.0.0.1:8001"
-exec "$PY" -m uvicorn app:app --host 127.0.0.1 --port 8001
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-8001}"
+echo "Starting Python service on http://${HOST}:${PORT} (0.0.0.0 = reachable from phone hotspot / LAN)"
+exec "$PY" -m uvicorn app:app --host "$HOST" --port "$PORT"

@@ -11,6 +11,7 @@
   var DEFAULT_BASE = 'http://127.0.0.1:8001';
   var lastBackendStatus = null;
   var lastTransport = 'python'; // 'python' | 'cloud'
+  var lastSyncCursorKey = 'piko.soundsSyncCursor';
 
   function baseUrl() {
     if (window.App && window.App.pythonBaseUrl) return window.App.pythonBaseUrl;
@@ -20,6 +21,21 @@
       if (ep && ep.http) return ep.http;
     }
     return DEFAULT_BASE;
+  }
+
+  function readSyncCursor() {
+    try {
+      return String(localStorage.getItem(lastSyncCursorKey) || '').trim();
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function writeSyncCursor(iso) {
+    if (!iso) return;
+    try {
+      localStorage.setItem(lastSyncCursorKey, String(iso));
+    } catch (e) { /* noop */ }
   }
 
   function cloudConfig() {
@@ -57,11 +73,14 @@
     };
   }
 
-  async function listSoundsPython() {
+  async function listSoundsPython(opts) {
     var ctrl = new AbortController();
     var t = setTimeout(function () { ctrl.abort(); }, 8000);
     try {
-      var res = await fetch(baseUrl() + '/sounds', { cache: 'no-store', signal: ctrl.signal });
+      var q = '';
+      var since = opts && opts.since;
+      if (since) q = '?since=' + encodeURIComponent(since);
+      var res = await fetch(baseUrl() + '/sounds' + q, { cache: 'no-store', signal: ctrl.signal });
       if (!res.ok) throw new Error('GET /sounds failed: ' + res.status);
       var data = await res.json();
       markPython(data.backend || lastBackendStatus);
@@ -84,9 +103,9 @@
     return Array.isArray(rows) ? rows : [];
   }
 
-  async function listSounds() {
+  async function listSounds(opts) {
     try {
-      return await listSoundsPython();
+      return await listSoundsPython(opts || null);
     } catch (err) {
       if (!cloudConfig()) throw err;
       console.warn('[sounds] Python list failed, trying Supabase direct:', err && err.message);
@@ -220,18 +239,23 @@
       short = '…' + dir.slice(-56);
     }
     var n = typeof st.localCount === 'number' ? st.localCount : '?';
-    return 'Storage: local · ' + n + ' files · ' + short;
+    return 'Storage: local · ' + n + ' files · shared via Python LAN (iPad sync OK) · ' + short;
   }
 
   /**
    * Import remote sounds into App.soundLibrary (skip existing backend ids).
+   * Cross-device: iPad / desktop share Python (or Supabase) as source of truth.
    * Returns { imported, importedIds, total, backend }.
    */
-  async function syncIntoApp(app) {
+  async function syncIntoApp(app, opts) {
     if (!app || typeof app.addFile !== 'function') {
       throw new Error('App.addFile unavailable');
     }
-    var rows = await listSounds();
+    var incremental = !!(opts && opts.incremental);
+    var since = incremental ? readSyncCursor() : '';
+    var rows = await listSounds(since ? { since: since } : null);
+    // First sync or empty cursor: full list. Keep cursor at newest created_at.
+    var newest = since;
     var imported = 0;
     var importedIds = [];
     var existing = new Set(
@@ -243,6 +267,9 @@
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
       if (!row || !row.id) continue;
+      if (row.created_at && (!newest || String(row.created_at) > newest)) {
+        newest = String(row.created_at);
+      }
       if (existing.has(row.id)) continue;
       if (row.upload_status && row.upload_status !== 'uploaded') continue;
 
@@ -269,13 +296,16 @@
       }
     }
 
+    if (newest) writeSyncCursor(newest);
+
     return {
       imported: imported,
       importedIds: importedIds,
       total: rows.length,
       sounds: rows,
       backend: lastBackendStatus,
-      transport: lastTransport
+      transport: lastTransport,
+      since: since || null
     };
   }
 

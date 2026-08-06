@@ -1,9 +1,9 @@
--- Piko Sounds — run once in Supabase SQL Editor
--- Storage: create a private bucket named "sounds" in Dashboard → Storage
--- (or rely on the Python service creating objects under that bucket name)
+-- Piko Sounds — run in Supabase SQL Editor (idempotent; safe to re-run)
+-- Required for iPad LocalPikoGateway (anon key) + Mac Python (service_role).
 
 create extension if not exists "pgcrypto";
 
+-- 1) Metadata table
 create table if not exists public.sounds (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
@@ -21,23 +21,70 @@ create table if not exists public.sounds (
 create index if not exists sounds_created_at_idx
   on public.sounds (created_at desc);
 
--- Service role bypasses RLS; keep RLS on for anon/authenticated clients.
 alter table public.sounds enable row level security;
 
--- iPad / browser direct READ (anon key in web-demo/pikoCloudConfig.js).
--- Safe for prototype: list metadata only. Writes still use service_role via Python.
--- Re-run after first deploy if policies were missing.
+-- 2) Private storage bucket "sounds"
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'sounds',
+  'sounds',
+  false,
+  52428800, -- 50MB
+  array['audio/wav', 'audio/x-wav', 'audio/wave', 'application/octet-stream']::text[]
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+-- 3) Table policies (anon = iPad App / browser; service_role bypasses RLS)
 drop policy if exists "sounds_select_anon" on public.sounds;
 create policy "sounds_select_anon"
   on public.sounds for select
   to anon, authenticated
   using (true);
 
--- Storage: allow anon/authenticated to DOWNLOAD objects in bucket "sounds".
--- Create the private bucket "sounds" in Dashboard → Storage first.
--- (No anon INSERT/UPDATE — desktop Bridge + Python still owns uploads.)
+drop policy if exists "sounds_insert_anon" on public.sounds;
+create policy "sounds_insert_anon"
+  on public.sounds for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "sounds_update_anon" on public.sounds;
+create policy "sounds_update_anon"
+  on public.sounds for update
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists "sounds_delete_anon" on public.sounds;
+create policy "sounds_delete_anon"
+  on public.sounds for delete
+  to anon, authenticated
+  using (true);
+
+-- 4) Storage object policies for bucket "sounds"
 drop policy if exists "sounds_objects_select_anon" on storage.objects;
 create policy "sounds_objects_select_anon"
   on storage.objects for select
+  to anon, authenticated
+  using (bucket_id = 'sounds');
+
+drop policy if exists "sounds_objects_insert_anon" on storage.objects;
+create policy "sounds_objects_insert_anon"
+  on storage.objects for insert
+  to anon, authenticated
+  with check (bucket_id = 'sounds');
+
+drop policy if exists "sounds_objects_update_anon" on storage.objects;
+create policy "sounds_objects_update_anon"
+  on storage.objects for update
+  to anon, authenticated
+  using (bucket_id = 'sounds')
+  with check (bucket_id = 'sounds');
+
+drop policy if exists "sounds_objects_delete_anon" on storage.objects;
+create policy "sounds_objects_delete_anon"
+  on storage.objects for delete
   to anon, authenticated
   using (bucket_id = 'sounds');

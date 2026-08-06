@@ -27,6 +27,12 @@ class Esp32AudioAdapter {
     this.waveCtx = null;
     this.waveAnimFrame = null;
     this._waveInited = false;
+    // Wi‑Fi control plane (no USB Bridge): poll /metrics + HTTP record start/stop
+    this.wifiBase = options.wifiBase || "";
+    this.wifiMode = false;
+    this.wifiRecording = false;
+    this._wifiPollTimer = null;
+    this._wifiDiscoverAt = 0;
   }
 
   initWaveMonitor() {
@@ -99,6 +105,7 @@ class Esp32AudioAdapter {
 
   connect() {
     this.initWaveMonitor();
+    this.ensureWifiTransport();
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
       return;
     }
@@ -124,24 +131,178 @@ class Esp32AudioAdapter {
 
     this.ws.onerror = () => {
       console.warn("[esp32] WebSocket error");
-      this.updateStatus("error");
+      if (!this.wifiMode) this.updateStatus("error");
     };
 
     this.ws.onclose = () => {
       this.connected = false;
-      this.serialOpen = false;
-      this.updateStatus("disconnected");
+      if (!this.wifiMode) this.serialOpen = false;
+      if (!this.wifiMode) this.updateStatus("disconnected");
       if (this._liveMonitorTimer) {
         clearInterval(this._liveMonitorTimer);
         this._liveMonitorTimer = null;
       }
       this.updateLiveMonitor();
       this.scheduleReconnect();
+      this.ensureWifiTransport();
     };
   }
 
-  /** Collect Ready only when Bridge WS is up AND USB serial is open. */
+  pythonHttpBase() {
+    if (window.App && window.App.pythonBaseUrl) return String(window.App.pythonBaseUrl).replace(/\/$/, "");
+    if (window.PikoServiceEndpoints?.resolvePythonEndpoints) {
+      const ep = window.PikoServiceEndpoints.resolvePythonEndpoints();
+      if (ep && ep.http) return String(ep.http).replace(/\/$/, "");
+    }
+    return "http://127.0.0.1:8001";
+  }
+
+  configuredWifiBase() {
+    if (this.wifiBase) return String(this.wifiBase).replace(/\/$/, "");
+    if (window.PikoServiceEndpoints?.resolveEsp32HttpBase) {
+      return String(window.PikoServiceEndpoints.resolveEsp32HttpBase() || "").replace(/\/$/, "");
+    }
+    return "";
+  }
+
+  async discoverWifiBase() {
+    const now = Date.now();
+    if (now - this._wifiDiscoverAt < 2500) return this.wifiBase || "";
+    this._wifiDiscoverAt = now;
+
+    const candidates = [];
+    const configured = this.configuredWifiBase();
+    if (configured) candidates.push(configured);
+    candidates.push("http://piko-esp.local:8080");
+
+    try {
+      const res = await fetch(this.pythonHttpBase() + "/esp32", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        const base = data?.esp32?.base;
+        if (base) candidates.unshift(String(base).replace(/\/$/, ""));
+      }
+    } catch (_) { /* ignore */ }
+
+    for (const base of candidates) {
+      if (!base) continue;
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 900);
+        const res = await fetch(base + "/metrics", { cache: "no-store", signal: ctrl.signal });
+        clearTimeout(t);
+        if (res.ok) {
+          this.wifiBase = base;
+          if (window.PikoServiceEndpoints?.saveEsp32Base) {
+            window.PikoServiceEndpoints.saveEsp32Base(base);
+          }
+          return base;
+        }
+      } catch (_) { /* try next */ }
+    }
+    return this.wifiBase || "";
+  }
+
+  startWifiPolling(base) {
+    const b = String(base || "").replace(/\/$/, "");
+    if (!b) return;
+    this.wifiBase = b;
+    this.wifiMode = true;
+    this.serialOpen = true;
+    this.pcmCapable = true;
+    this.lastMessageAt = Date.now();
+    this.updateStatus("connected");
+    console.log("[esp32] Wi‑Fi control plane:", b);
+    if (!this._wifiPollTimer) {
+      this._wifiPollTimer = setInterval(() => this.pollWifiMetrics(), 80);
+    }
+    return this.pollWifiMetrics();
+  }
+
+  async ensureWifiTransport() {
+    // Prefer USB Bridge when it is live; otherwise enable Wi‑Fi metrics/control.
+    if (this.isUsbLive()) return true;
+    const base = await this.discoverWifiBase();
+    if (!base) return false;
+    await this.startWifiPolling(base);
+    return this.isWifiLive() || this.wifiMode;
+  }
+
+  isUsbLive() {
+    return this.isWsOpen() && this.serialOpen === true && (Date.now() - this.lastMessageAt) < 4000;
+  }
+
+  stopWifiPolling() {
+    if (this._wifiPollTimer) {
+      clearInterval(this._wifiPollTimer);
+      this._wifiPollTimer = null;
+    }
+  }
+
+  async pollWifiMetrics() {
+    if (this.isUsbLive()) {
+      // USB took over — pause Wi‑Fi polling but keep base for fallback.
+      return;
+    }
+    const python = this.pythonHttpBase();
+    const urls = [];
+    if (this.wifiBase) urls.push(this.wifiBase.replace(/\/$/, "") + "/metrics");
+    urls.push(python + "/esp32/metrics");
+
+    for (const url of urls) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 700);
+        const res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+        clearTimeout(t);
+        if (!res.ok) continue;
+        const data = await res.json();
+        this.applyWifiMetrics(data);
+        return;
+      } catch (_) { /* try next */ }
+    }
+  }
+
+  applyWifiMetrics(data) {
+    if (!data) return;
+    this.wifiMode = true;
+    this.serialOpen = true;
+    this.pcmCapable = true;
+    const wasRecording = this.wifiRecording;
+    this.wifiRecording = !!data.recording;
+
+    const volume = Number(data.volume);
+    const peak = Number(data.peak);
+    const levelRaw = Number(data.level);
+    const volumePct = Number.isFinite(volume) ? volume : undefined;
+    const level = Number.isFinite(levelRaw)
+      ? levelRaw
+      : (Number.isFinite(volumePct) ? (volumePct / 100) * 32768 : 0);
+    const peakVal = Number.isFinite(peak) ? peak : level;
+
+    this.ingestMetrics({
+      level,
+      peak: peakVal,
+      mean: level * 0.35,
+      timestamp: Date.now(),
+      volumePct
+    });
+
+    if (!wasRecording && this.wifiRecording && typeof this.onHardwareRecord === "function") {
+      this.onHardwareRecord({ status: "started", source: "wifi", timestamp: Date.now() });
+    }
+    if (wasRecording && !this.wifiRecording && typeof this.onHardwareRecord === "function") {
+      this.onHardwareRecord({ status: "stopped", source: "wifi", timestamp: Date.now() });
+    }
+    this.refreshConnectionStatus();
+  }
+
+  /** Collect Ready: USB serial open OR Wi‑Fi metrics live. */
   refreshConnectionStatus() {
+    if (this.isWifiLive()) {
+      this.updateStatus("connected");
+      return;
+    }
     if (!this.isWsOpen()) {
       this.updateStatus("disconnected");
       return;
@@ -149,7 +310,6 @@ class Esp32AudioAdapter {
     if (this.serialOpen === true) {
       this.updateStatus("connected");
     } else {
-      // Bridge online but recorder USB not plugged / not opened yet
       this.updateStatus("disconnected");
     }
   }
@@ -175,6 +335,7 @@ class Esp32AudioAdapter {
   }
 
   ensureConnected() {
+    this.ensureWifiTransport();
     if (this.isWsOpen()) return;
     if (this.ws?.readyState === WebSocket.CONNECTING) return;
     if (this.ws) this.disconnect();
@@ -204,7 +365,20 @@ class Esp32AudioAdapter {
     return !!(this.ws && this.ws.readyState === WebSocket.OPEN);
   }
 
+  isWifiLive() {
+    return !!(this.wifiMode && (Date.now() - this.lastMessageAt) < 3000);
+  }
+
+  /** USB Bridge open OR Wi‑Fi metrics path live. */
+  isTransportReady() {
+    return this.isUsbLive() || this.isWifiLive();
+  }
+
   sendCommand(cmd) {
+    // Wi‑Fi HTTP control when USB Bridge is not live
+    if (!this.isUsbLive() && (this.wifiMode || this.wifiBase || this.configuredWifiBase())) {
+      return this.sendWifiCommand(cmd);
+    }
     return new Promise((resolve, reject) => {
       if (!this.isWsOpen()) {
         reject(new Error("WebSocket not connected"));
@@ -224,6 +398,31 @@ class Esp32AudioAdapter {
 
       this.ws.send(JSON.stringify({ cmd }));
     });
+  }
+
+  async sendWifiCommand(cmd) {
+    const action = cmd === "record_start" ? "start"
+      : cmd === "record_stop" ? "stop"
+      : null;
+    if (!action) throw new Error("Unsupported Wi‑Fi cmd: " + cmd);
+
+    const python = this.pythonHttpBase();
+    const tries = [];
+    if (this.wifiBase) tries.push(this.wifiBase.replace(/\/$/, "") + "/record/" + action);
+    tries.push(python + "/esp32/record/" + action);
+
+    let lastErr = null;
+    for (const url of tries) {
+      try {
+        const res = await fetch(url, { method: "POST", cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        this.wifiRecording = action === "start";
+        return { status: action === "start" ? "started" : "stopped", via: "wifi", url };
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error("Wi‑Fi record command failed");
   }
 
   handleMessage(raw) {
@@ -293,6 +492,21 @@ class Esp32AudioAdapter {
       return;
     }
 
+    if (parsed.type === "metrics" || parsed.volume !== undefined) {
+      const volumePct = parsed.volume !== undefined ? Number(parsed.volume) : parsed.volumePct;
+      const level = parsed.level !== undefined
+        ? this.clampNumber(parsed.level)
+        : (Number.isFinite(volumePct) ? (volumePct / 100) * 32768 : 0);
+      this.ingestMetrics({
+        level,
+        peak: this.clampNumber(parsed.peak !== undefined ? parsed.peak : level),
+        mean: this.clampNumber(parsed.mean || level * 0.35),
+        timestamp: parsed.timestamp || Date.now(),
+        volumePct
+      });
+      return;
+    }
+
     if (parsed.level !== undefined || parsed.peak !== undefined || parsed.mean !== undefined) {
       this.ingestMetrics({
         level: this.clampNumber(parsed.level),
@@ -319,25 +533,28 @@ class Esp32AudioAdapter {
     const monitor = document.getElementById("esp32LiveMonitor");
     if (!label) return;
 
-    const open = this.isWsOpen();
+    const open = this.isTransportReady();
     const active = this.isActive();
     const amp = this.getLiveAmplitude();
     const detecting = active && amp > 0.06;
+    const viaWifi = this.isWifiLive() && !this.isUsbLive();
 
     if (!open) {
-      label.textContent = "INMP441 未连接 — 请运行 Bridge（ESP32 串口）";
+      label.textContent = "INMP441 未连接 — 启动 Bridge(USB) 或等待 ESP32 Wi‑Fi /metrics";
       monitor?.classList.remove("is-live", "is-detecting");
       return;
     }
 
-    if (this.serialOpen === false) {
-      label.textContent = "INMP441 串口未开 — 关闭串口监视器并重启 Bridge";
+    if (!viaWifi && this.isWsOpen() && this.serialOpen === false) {
+      label.textContent = "INMP441 串口未开 — 关闭串口监视器并重启 Bridge（或改用 Wi‑Fi）";
       monitor?.classList.remove("is-live", "is-detecting");
       return;
     }
 
     if (!active && this.messageCount === 0) {
-      label.textContent = "INMP441 已连接，等待声音…";
+      label.textContent = viaWifi
+        ? "INMP441 Wi‑Fi 已连接，等待声音…"
+        : "INMP441 已连接，等待声音…";
       monitor?.classList.remove("is-live", "is-detecting");
       return;
     }
@@ -346,11 +563,13 @@ class Esp32AudioAdapter {
     monitor?.classList.toggle("is-detecting", detecting);
 
     if (!active && this.messageCount > 0) {
-      label.textContent = "INMP441 数据中断（检查接线 / 串口）";
+      label.textContent = viaWifi
+        ? "INMP441 Wi‑Fi 数据中断（检查热点 / ESP32）"
+        : "INMP441 数据中断（检查接线 / 串口）";
     } else if (detecting) {
-      label.textContent = "INMP441 · 检测到声音";
+      label.textContent = viaWifi ? "INMP441 Wi‑Fi · 检测到声音" : "INMP441 · 检测到声音";
     } else {
-      label.textContent = "INMP441 · 监听中";
+      label.textContent = viaWifi ? "INMP441 Wi‑Fi · 监听中" : "INMP441 · 监听中";
     }
   }
 
@@ -404,15 +623,16 @@ class Esp32AudioAdapter {
   }
 
   isActive() {
-    return this.isWsOpen() && (Date.now() - this.lastMessageAt) < 4000;
+    return this.isTransportReady() && (Date.now() - this.lastMessageAt) < 4000;
   }
 
   isConnected() {
     return this.isActive();
   }
 
-  /** Bridge WS + ESP32 serial open → INMP441 path available. */
+  /** USB Bridge serial OR Wi‑Fi metrics path. */
   isHardwareReady() {
+    if (this.isWifiLive()) return true;
     return this.isWsOpen() && this.serialOpen !== false;
   }
 

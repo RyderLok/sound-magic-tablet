@@ -51,6 +51,11 @@ else:
         "http://127.0.0.1:8000",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
+        # Common LAN / hotspot origins (iPad Safari → Mac static host)
+        "null",
+        "http://localhost",
+        "capacitor://localhost",
+        "ionic://localhost",
     ]
 
 # Optional SiliconFlow Qwen3-Omni (SILICONFLOW_API_KEY in env / .env)

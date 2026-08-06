@@ -84,12 +84,16 @@ wss.on("listening", () => {
   console.log(`[ws] listening on ws://localhost:${WS_PORT}`);
 });
 
-function bridgeHealthPayload() {
+const HEALTH_BIND = (process.env.BRIDGE_HEALTH_BIND || "0.0.0.0").trim() || "0.0.0.0";
+
+function bridgeHealthPayload(reqHost) {
+  const host = (reqHost || "127.0.0.1").split(":")[0] || "127.0.0.1";
+  const publicHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return {
     status: serial?.isOpen ? "ok" : "serial_closed",
-    ws: `ws://127.0.0.1:${WS_PORT}`,
+    ws: `ws://${publicHost}:${WS_PORT}`,
     wsListening: true,
-    health: `http://127.0.0.1:${HEALTH_PORT}/health`,
+    health: `http://${publicHost}:${HEALTH_PORT}/health`,
     serial: {
       port: activePort || PREFERRED_PORT || "auto",
       baud: BAUD_RATE,
@@ -109,7 +113,8 @@ function bridgeHealthPayload() {
 
 const healthServer = http.createServer((req, res) => {
   if (req.url === "/health" || req.url === "/health/") {
-    const body = JSON.stringify(bridgeHealthPayload());
+    const reqHost = (req.headers && req.headers.host) || `127.0.0.1:${HEALTH_PORT}`;
+    const body = JSON.stringify(bridgeHealthPayload(reqHost));
     res.writeHead(200, {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*"
@@ -121,8 +126,8 @@ const healthServer = http.createServer((req, res) => {
   res.end();
 });
 
-healthServer.listen(HEALTH_PORT, "127.0.0.1", () => {
-  console.log(`[health] http://127.0.0.1:${HEALTH_PORT}/health`);
+healthServer.listen(HEALTH_PORT, HEALTH_BIND, () => {
+  console.log(`[health] http://${HEALTH_BIND}:${HEALTH_PORT}/health`);
 });
 
 wss.on("connection", (socket) => {

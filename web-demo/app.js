@@ -27,14 +27,21 @@ const App = {
     if (this._servicesBootstrapped) return;
     this._servicesBootstrapped = true;
 
+    if (window.PikoServiceEndpoints && window.PikoServiceEndpoints.ingestQueryOverrides) {
+      window.PikoServiceEndpoints.ingestQueryOverrides();
+    }
+
     const endpoints = (window.PikoServiceEndpoints && window.PikoServiceEndpoints.resolvePythonEndpoints)
       ? window.PikoServiceEndpoints.resolvePythonEndpoints()
       : { http: "http://127.0.0.1:8001", ws: "ws://127.0.0.1:8001/ws/audio" };
+    const bridgeEp = (window.PikoServiceEndpoints && window.PikoServiceEndpoints.resolveBridgeEndpoints)
+      ? window.PikoServiceEndpoints.resolveBridgeEndpoints()
+      : { ws: "ws://127.0.0.1:8765" };
 
     this.pythonBaseUrl = endpoints.http;
 
     if (!this.esp32AudioAdapter) {
-      this.esp32AudioAdapter = new Esp32AudioAdapter({ url: "ws://localhost:8765" });
+      this.esp32AudioAdapter = new Esp32AudioAdapter({ url: bridgeEp.ws || "ws://127.0.0.1:8765" });
       window.esp32AudioAdapter = this.esp32AudioAdapter;
       this.esp32AudioAdapter.connect();
     }

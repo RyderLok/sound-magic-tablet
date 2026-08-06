@@ -2,7 +2,7 @@
 
 用户从 Mac 迁回 Windows 后，**期望零手动配置**：Agent 应自动把项目跑起来，不要反复问「要不要启动服务」。
 
-文档：[`README.md`](./README.md) · [`技术说明书.md`](./技术说明书.md)
+文档：[`README.md`](./README.md) · [`技术说明书.md`](./技术说明书.md) · **交互契约** [`交互基准.md`](./交互基准.md) · **中文总览/iPad** [`Piko中文交互说明与iPad就绪.md`](./Piko中文交互说明与iPad就绪.md)
 
 ## 打开本项目后（Windows，优先）
 
@@ -32,6 +32,13 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
 
 - 录音持久化：`web-demo/sampleLibraryStore.js`（IndexedDB，浏览器本地）
 - 画板多 brush：`web-demo/plateManager.js`（最多 5 段，共享 plate）
+
+## Wi‑Fi 优先 / iPad（产品运行时）
+
+- **生产**：[`ios/PikoShell`](./ios/PikoShell) 本机 `LocalPikoGateway` **:8001** + 内嵌 web-demo；ESP `WIFI_UPLOAD_HOST` = **iPad 热点 IP**（Settings 可见）。不依赖现场 Mac。
+- **开发机（可选）**：Mac/PC Python `0.0.0.0:8001` + `web-demo` :8000；USB Bridge 仅桌面调试。
+- **固件**：`esp32/wifi_secrets.h`；控制面 `:8080`；上传契约仍是 `POST /sounds/upload_pcm`
+- **说明**：见 [`ios/PikoShell/README.md`](./ios/PikoShell/README.md) · [`Piko中文交互说明与iPad就绪.md`](./Piko中文交互说明与iPad就绪.md)
 
 ## 临时页（随时可删，非产品功能）
 

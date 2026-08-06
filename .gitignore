@@ -21,6 +21,9 @@ __pycache__/
 *.key
 credentials.json
 secrets.json
+esp32/**/wifi_secrets.h
+ios/PikoShell/**/Secrets.plist
+
 
 # Logs
 logs/
@@ -54,3 +57,5 @@ Desktop.ini
 .cursor/hooks/
 .cursor/hooks.json
 .codex/
+web-demo/_shots/
+**/xcuserdata/

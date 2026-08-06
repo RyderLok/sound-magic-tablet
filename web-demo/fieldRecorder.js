@@ -179,30 +179,80 @@ class FieldRecorder {
     return `Field sound ${this.recordCounter}`;
   }
 
+  wifiFirstMode() {
+    return !!(window.PikoServiceEndpoints && window.PikoServiceEndpoints.isWifiFirstMode
+      && window.PikoServiceEndpoints.isWifiFirstMode());
+  }
+
   hardwareErrorMessage() {
     return (
       "INMP441 硬件未就绪。\n\n" +
-      "录音只用 ESP32 + INMP441，不用电脑麦克风。\n\n" +
       "请确认：\n" +
-      "1. 已烧录 esp32/inmp441_bridge.ino\n" +
-      "2. Bridge 在运行（COM3 / cu.usbserial，波特率 500000）\n" +
-      "3. 已关闭 Arduino 串口监视器\n" +
-      "4. 页面上方「ESP32 实时」条有音量跳动"
+      "1. 已烧录最新 esp32/inmp441_bridge.ino（含 /metrics）\n" +
+      "2. USB：Bridge 在跑；或 Wi‑Fi：ESP32 已连热点并 announce 到 Python\n" +
+      "3. 页面上方电平条在动（USB 或 Wi‑Fi Live）\n" +
+      "4. 可选 ?esp32=http://<ESP-IP>:8080"
     );
   }
 
   serialErrorMessage() {
+    if (this.wifiFirstMode()) {
+      return this.hardwareErrorMessage();
+    }
     return (
       "ESP32 串口未打开，INMP441 无法收音。\n\n" +
-      "请关闭 Arduino 串口监视器，确认 USB 已插入，然后重启 Bridge。"
+      "请关闭 Arduino 串口监视器，确认 USB 已插入，然后重启 Bridge。\n" +
+      "若只用 Wi‑Fi：在设备上按键录音，页面将从 Python 同步。"
     );
   }
 
-  /** Bridge WS open + serial open (INMP441 path ready). */
+  /** Bridge WS open + serial open, OR Wi‑Fi metrics live. */
   isInmp441Ready(esp) {
+    if (!esp) return false;
+    if (typeof esp.isHardwareReady === "function" && esp.isHardwareReady()) return true;
+    if (typeof esp.isWifiLive === "function" && esp.isWifiLive()) return true;
     if (!esp?.isWsOpen()) return false;
     if (esp.serialOpen === false) return false;
     return true;
+  }
+
+  usesWifiTransport(esp) {
+    const a = esp || this.getAdapter();
+    if (!a) return false;
+    if (typeof a.isUsbLive === "function" && a.isUsbLive()) return false;
+    return !!(typeof a.isWifiLive === "function" && a.isWifiLive())
+      || !!(a.wifiMode)
+      || !!this.esp32HttpBase();
+  }
+
+  /** Wi‑Fi control plane: ESP32 HTTP /record/* when configured. */
+  esp32HttpBase() {
+    if (window.PikoServiceEndpoints && typeof window.PikoServiceEndpoints.resolveEsp32HttpBase === "function") {
+      return window.PikoServiceEndpoints.resolveEsp32HttpBase();
+    }
+    return "";
+  }
+
+  async startViaEsp32Http() {
+    const esp = this.getAdapter();
+    if (esp && typeof esp.sendWifiCommand === "function") {
+      try {
+        await esp.sendWifiCommand("record_start");
+        return true;
+      } catch (err) {
+        console.warn("[record] Wi‑Fi start via adapter failed:", err);
+      }
+    }
+    const base = this.esp32HttpBase();
+    if (!base) return false;
+    try {
+      const res = await fetch(base.replace(/\/$/, "") + "/record/start", { method: "POST" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return true;
+    } catch (err) {
+      console.warn("[record] ESP32 HTTP start failed:", err);
+      return false;
+    }
   }
 
   pushMetricSample(force) {
@@ -231,9 +281,10 @@ class FieldRecorder {
     this.bindElements();
 
     const esp = this.getAdapter();
-    // Hardware button / PCM arm must never be blocked by a stale serialOpen flag.
-    // UI button still requires full INMP441 readiness.
     if (!options.fromHardware) {
+      if (!this.isInmp441Ready(esp) && esp?.ensureWifiTransport) {
+        await esp.ensureWifiTransport();
+      }
       if (!this.isInmp441Ready(esp)) {
         alert(
           esp?.isWsOpen() && esp.serialOpen === false
@@ -242,11 +293,14 @@ class FieldRecorder {
         );
         return;
       }
-    } else if (!esp?.isWsOpen()) {
+    } else if (!esp?.isWsOpen() && !this.usesWifiTransport(esp)) {
       return;
     }
 
-    esp.resetRecordingCalibration();
+    this._wifiSession = this.usesWifiTransport(esp)
+      && !(esp && typeof esp.isUsbLive === "function" && esp.isUsbLive());
+
+    esp?.resetRecordingCalibration?.();
     this.metricsBuffer = [];
     this.pcmChunks = [];
     this.recording = true;
@@ -256,11 +310,16 @@ class FieldRecorder {
     this.usedPcmPath = false;
     this.pcmByteTotal = 0;
 
-    // Keyes already toggled ESP32 recording — do not send REC_START again
-    if (!options.skipSerialCommand && esp?.isWsOpen()) {
-      esp.sendCommand("record_start").catch(err => {
-        console.warn("[record] REC_START skipped:", err.message);
-      });
+    if (!options.skipSerialCommand) {
+      try {
+        if (this._wifiSession) {
+          await esp.sendCommand("record_start");
+        } else if (esp?.isWsOpen?.()) {
+          await esp.sendCommand("record_start");
+        }
+      } catch (err) {
+        console.warn("[record] REC_START skipped:", err.message || err);
+      }
     }
 
     esp.onMetrics = (m) => {
@@ -277,14 +336,19 @@ class FieldRecorder {
       });
       this.lastMeterLevel = level;
       if (this.els.pointCount) {
-        const pcmKb = (this.pcmByteTotal / 1024).toFixed(1);
-        this.els.pointCount.textContent =
-          `INMP441 PCM：${pcmKb} KB · 音量 ${Math.round(level * 100)}%`;
+        if (this._wifiSession) {
+          this.els.pointCount.textContent =
+            `INMP441 Wi‑Fi · 音量 ${Math.round(level * 100)}%`;
+        } else {
+          const pcmKb = (this.pcmByteTotal / 1024).toFixed(1);
+          this.els.pointCount.textContent =
+            `INMP441 PCM：${pcmKb} KB · 音量 ${Math.round(level * 100)}%`;
+        }
       }
     };
 
     esp.onPcmFrame = (bytes) => {
-      if (!this.recording) return;
+      if (!this.recording || this._wifiSession) return;
       this.pcmChunks.push(bytes);
       this.pcmByteTotal += bytes.length;
       this.lastMeterLevel = pcmLevelFromBytes(bytes);
@@ -299,11 +363,10 @@ class FieldRecorder {
     const pipe = document.getElementById("pipelineStatus");
     if (pipe) {
       pipe.dataset.state = "recording";
-      pipe.textContent = "Recording";
+      pipe.textContent = this._wifiSession ? "Recording · Wi‑Fi" : "Recording";
     }
 
     this.pushMetricSample(true);
-
     this.setPanel("active");
     if (this.els.timer) {
       this.els.timer.textContent = `0.0 / ${FieldRecorder.MAX_DURATION_SEC}s`;
@@ -311,9 +374,11 @@ class FieldRecorder {
     }
     if (this.els.hint) {
       const maxLabel = `最长 ${FieldRecorder.MAX_DURATION_SEC}s`;
-      this.els.hint.textContent = options.fromHardware
-        ? `INMP441 录音中… ${maxLabel}，再按 Keyes 或点 Stop 结束。`
-        : `INMP441 录音中… ${maxLabel}，点 Stop 结束（不用电脑麦克风）。`;
+      this.els.hint.textContent = this._wifiSession
+        ? `Wi‑Fi 录音中… 实时波形来自设备。${maxLabel}，点 Stop 结束并上传。`
+        : options.fromHardware
+          ? `INMP441 录音中… ${maxLabel}，再按 Keyes 或点 Stop 结束。`
+          : `INMP441 录音中… ${maxLabel}，点 Stop 结束（不用电脑麦克风）。`;
     }
     this.startMeterLoop();
   }
@@ -344,6 +409,7 @@ class FieldRecorder {
     }
 
     const esp = this.getAdapter();
+    const wifiSession = !!this._wifiSession;
     this.recording = false;
     this._stoppingForLimit = false;
     this.stopMeterLoop();
@@ -358,20 +424,48 @@ class FieldRecorder {
     if (esp) {
       esp.onMetrics = null;
       esp.onPcmFrame = null;
-      // Keyes already stopped ESP32 — do not send REC_STOP again
-      if (!options.skipSerialCommand && esp?.isWsOpen()) {
-        esp.sendCommand("record_stop").catch(err => {
-          console.warn("[record] REC_STOP skipped:", err.message);
-        });
-        await new Promise(r => setTimeout(r, 400));
+      if (!options.skipSerialCommand) {
+        try {
+          if (wifiSession || esp.isWifiLive?.()) {
+            await esp.sendCommand("record_stop");
+            await new Promise(r => setTimeout(r, 1200));
+          } else if (esp?.isWsOpen()) {
+            await esp.sendCommand("record_stop");
+            await new Promise(r => setTimeout(r, 400));
+          }
+        } catch (err) {
+          console.warn("[record] REC_STOP skipped:", err.message || err);
+          await new Promise(r => setTimeout(r, wifiSession ? 1200 : 150));
+        }
       } else if (options.skipSerialCommand) {
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, wifiSession ? 1200 : 150));
       }
     }
 
     if (duration < 0.25) {
       alert("录音太短，请再录长一点。");
       this.setPanel("idle");
+      this._wifiSession = false;
+      return;
+    }
+
+    // Wi‑Fi path: device uploads PCM to Python; pull into library (no local PCM frames).
+    if (wifiSession) {
+      if (this.els.hint) {
+        this.els.hint.textContent = "Wi‑Fi 上传中，正在同步声音库…";
+      }
+      try {
+        await this.finishWifiUploadSession(options);
+      } catch (err) {
+        console.warn("[record] Wi‑Fi finish failed:", err);
+        alert(
+          "Wi‑Fi 录音已停止，但同步声音库失败。\n" +
+          "请确认 Python :8001 可达，稍后打开 Transfer 手动同步。\n\n" +
+          String(err && err.message ? err.message : err)
+        );
+        this.setPanel("idle");
+      }
+      this._wifiSession = false;
       return;
     }
 
@@ -399,7 +493,6 @@ class FieldRecorder {
     const blob = encodeWavFromPcmBytes(pcm, sampleRate);
     this.usedPcmPath = true;
 
-    const sampleCount = this.metricsBuffer.length;
     this.savedMetricsSeries = this.metricsBuffer.map(s => ({ ...s }));
     this.metricsBuffer = [];
 
@@ -443,6 +536,43 @@ class FieldRecorder {
     this.setPanel("save");
     this.els.savePanel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     this.els.nameInput?.focus();
+  }
+
+  async finishWifiUploadSession(options = {}) {
+    const client = window.SoundsApiClient;
+    if (!client || typeof client.syncIntoApp !== "function") {
+      throw new Error("SoundsApiClient unavailable");
+    }
+
+    let importedIds = [];
+    for (let i = 0; i < 8; i++) {
+      const result = await client.syncIntoApp(this.app, { incremental: true });
+      if (result && result.imported > 0) {
+        importedIds = result.importedIds || [];
+        break;
+      }
+      await new Promise(r => setTimeout(r, 700));
+    }
+
+    if (importedIds.length && typeof client.appendLatestBatch === "function") {
+      client.appendLatestBatch(importedIds);
+    }
+    if (window.PikoSoundsScreen?.render) window.PikoSoundsScreen.render();
+    if (typeof this.app.renderLibrary === "function") this.app.renderLibrary();
+
+    const pipe = document.getElementById("pipelineStatus");
+    if (pipe) {
+      pipe.dataset.state = "connected";
+      pipe.textContent = importedIds.length ? "Pipeline · Wi‑Fi saved" : "Pipeline · Wi‑Fi sync";
+    }
+
+    if (this.els.hint) {
+      this.els.hint.textContent = importedIds.length
+        ? `Wi‑Fi 录音已上传并同步（${importedIds.length}）。可在声音库使用。`
+        : "Wi‑Fi 已停止；若库中暂无新文件，请稍后再同步 Transfer。";
+    }
+    this.setPanel("idle");
+    this.metricsBuffer = [];
   }
 
   async savePending(options = {}) {
