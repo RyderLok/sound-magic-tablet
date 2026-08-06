@@ -304,6 +304,22 @@ button {
 
 .piko-collect { background: var(--piko-white); }
 
+/* 右上录音历史 · Figma 132:12 圆 Ø56 @(979,60) */
+.collect-history-btn {
+  left: 979px;
+  top: 60px;
+  width: 56px;
+  height: 56px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+  z-index: 3;
+}
+
+.collect-history-btn img {
+  width: 29.85px;
+  height: 27.52px;
+}
+
 /* 主说明 · 居中 top:131，32px */
 .collect-lead {
   position: absolute;
@@ -950,7 +966,7 @@ button {
 }
 
 /* ============================================================
-   P3 · MY SOUNDS  (Figma 1:49)
+   P3 · NEW SOUNDS  (Figma 1:49)
 ============================================================ */
 
 .piko-sounds { background: var(--piko-white); }
@@ -1161,6 +1177,63 @@ button {
   top: 684px;
   width: 281px;
   height: 67px;
+}
+
+/* ============================================================
+   P2c · MY SOUNDS HISTORY  (Figma 132:25)
+============================================================ */
+
+.piko-my-sounds { background: var(--piko-white); }
+
+.piko-my-sounds-menu-btn {
+  left: 962px;
+  top: 60px;
+  width: 61px;
+  height: 61px;
+  background: var(--piko-orange);
+  box-shadow: var(--piko-shadow);
+}
+
+.piko-my-sounds-menu-btn.is-active {
+  outline: 3px solid rgba(255, 122, 26, 0.35);
+  outline-offset: 2px;
+}
+
+.piko-my-sounds-menu-btn img {
+  width: 27px;
+  height: 27px;
+  display: block;
+}
+
+.piko-my-sounds .my-sounds-select-bar {
+  left: 120px;
+  right: 140px;
+}
+
+.piko-my-sounds:not(.is-selecting) .sound-card {
+  cursor: default;
+}
+
+.piko-my-sounds:not(.is-selecting) .sound-card:hover {
+  transform: none;
+}
+
+.piko-my-sounds .sound-check[hidden] {
+  display: none;
+}
+
+.piko-my-sounds.is-selecting .sound-card {
+  cursor: pointer;
+}
+
+.piko-my-sounds.is-selecting .sound-card.is-selected {
+  border-color: var(--piko-orange);
+}
+
+.piko-my-sounds.is-selecting .sound-card.is-selected .sound-check {
+  background: var(--piko-orange);
+  color: var(--piko-white);
+  border-color: var(--piko-orange);
 }
 
 /* 左上返回圆钮 · (31,60) Ø61 —— 各屏通用 */

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=piko63" />
+  <link rel="stylesheet" href="style.css?v=piko66" />
 </head>
 <body>
 
@@ -37,6 +37,10 @@
   <div id="collectView" class="view piko-screen piko-collect hidden">
     <h1 class="piko-title">Collect</h1>
     <p class="collect-lead">Insert the recorder into the drawing board to transfer your sound</p>
+
+    <button type="button" id="collectHistoryBtn" class="piko-round-btn is-filled collect-history-btn" title="录音历史" aria-label="录音历史">
+      <img src="piko-assets/icon-waveform.svg" alt="" aria-hidden="true" />
+    </button>
 
     <div class="collect-tiles" id="collectTiles" aria-label="Collect carousel">
       <button type="button" class="collect-tile is-slot-left" data-piko-go="draw" data-badge="3">
@@ -129,10 +133,32 @@
   </div>
 
   <!-- ================================================================
-       P3 · MY SOUNDS — 录音卡片，勾选 1–5 段做笔刷
+       P2c · MY SOUNDS — 历史录音浏览 + 多选删除（Figma 132:25）
+  ================================================================ -->
+  <div id="mySoundsView" class="view piko-screen piko-my-sounds hidden">
+    <button type="button" id="mySoundsBackBtn" class="piko-round-btn piko-back-btn" title="返回">
+      <img src="piko-assets/icon-chevron-left.svg" alt="返回" />
+    </button>
+    <button type="button" id="mySoundsMenuBtn" class="piko-round-btn piko-my-sounds-menu-btn" title="多选" aria-label="多选" aria-pressed="false">
+      <img src="piko-assets/icon-checklist.svg" alt="" aria-hidden="true" />
+    </button>
+
+    <h1 class="piko-title">My sounds</h1>
+    <p class="sounds-lead">Let’s see what sounds you’ve collected!</p>
+
+    <div id="mySoundsSelectBar" class="gallery-select-bar my-sounds-select-bar hidden" aria-live="polite">
+      <span id="mySoundsSelectCount" class="gallery-select-count">0 selected</span>
+      <button type="button" id="mySoundsDeleteBtn" class="gallery-delete-btn">Delete</button>
+    </div>
+
+    <div id="mySoundsTrack" class="sounds-track"></div>
+  </div>
+
+  <!-- ================================================================
+       P3 · NEW SOUNDS — 录音卡片，勾选 1–5 段做笔刷（Figma 1:49）
   ================================================================ -->
   <div id="soundsView" class="view piko-screen piko-sounds hidden">
-    <h1 class="piko-title">My sounds</h1>
+    <h1 class="piko-title">New Sounds</h1>
     <p class="sounds-lead">Pick 1–5 sounds to turn into brushes.</p>
 
     <button type="button" id="soundsRecordBtn" class="piko-round-btn sounds-record-btn" title="返回 Collect">
@@ -387,7 +413,7 @@
   <script src="plateManager.js?v=2"></script>
   <script src="brushSchema.js"></script>
   <script src="visualParamFusion.js"></script>
-  <script src="soundsApiClient.js?v=3"></script>
+  <script src="soundsApiClient.js?v=7"></script>
   <script src="fieldRecorder.js?v=6"></script>
   <script src="esp32AudioAdapter.js?v=8"></script>
   <script src="pythonEnhancementClient.js"></script>
@@ -411,15 +437,16 @@
   <script src="app.js?v=10"></script>
   <script src="sketch.js"></script>
   <!-- Piko 新界面：屏幕脚本 + 路由（路由放最后，接管初始显示哪一屏） -->
-  <script src="pikoSoundsScreen.js?v=5"></script>
+  <script src="pikoMySoundsScreen.js?v=2"></script>
+  <script src="pikoSoundsScreen.js?v=9"></script>
   <script src="pikoOrb.js?v=32"></script>
   <script src="pikoMagicScreen.js?v=10"></script>
   <script src="pikoBrushScreen.js?v=6"></script>
   <script src="pikoCanvasScreen.js?v=10"></script>
   <script src="pikoGalleryScreen.js?v=5"></script>
-  <script src="pikoTransferScreen.js?v=15"></script>
+  <script src="pikoTransferScreen.js?v=17"></script>
   <script src="pikoPrintingScreen.js?v=1"></script>
   <script src="pikoCollectCarousel.js?v=12"></script>
-  <script src="pikoRouter.js?v=9"></script>
+  <script src="pikoRouter.js?v=10"></script>
 </body>
 </html>

@@ -55,7 +55,10 @@ SILICONFLOW_BASE_URL = os.environ.get(
     "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
 )
 
-# Supabase Sounds (optional — local disk fallback when unset)
+# Supabase Sounds (preferred). When unset → local disk under LOCAL_SOUNDS_DIR.
+# Mac LaunchAgent mirrors this package to:
+#   ~/Library/Application Support/Piko/python-runtime/
+# so local WAVs live next to the running app, NOT always the Desktop project folder.
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
 SUPABASE_SOUNDS_BUCKET = (os.environ.get("SUPABASE_SOUNDS_BUCKET") or "sounds").strip() or "sounds"
@@ -67,3 +70,20 @@ LOCAL_SOUNDS_INDEX = LOCAL_SOUNDS_DIR / "index.json"
 
 def supabase_configured() -> bool:
     return bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)
+
+
+def write_local_sounds_pointer() -> Path:
+    """Write a Finder-friendly pointer next to WAVs (absolute path self-doc)."""
+    pointer = LOCAL_SOUNDS_DIR / "WHERE_ARE_MY_RECORDINGS.txt"
+    text = (
+        "Piko local sounds (Supabase not configured or offline fallback)\n"
+        f"Directory: {LOCAL_SOUNDS_DIR.resolve()}\n"
+        f"Index:     {LOCAL_SOUNDS_INDEX.resolve()}\n"
+        "Fill SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env to upload to cloud.\n"
+        "Then run: python migrate_local_to_supabase.py\n"
+    )
+    try:
+        pointer.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+    return pointer

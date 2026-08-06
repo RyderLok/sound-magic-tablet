@@ -346,6 +346,9 @@
       syncDone = true;
       return;
     }
+    if (typeof client.beginTransferSession === 'function') {
+      client.beginTransferSession();
+    }
     var statusEl = el('transferStatus');
     if (statusEl) {
       stopDots();
@@ -353,6 +356,9 @@
     }
     syncPromise = client.syncIntoApp(app)
       .then(function (result) {
+        if (typeof client.commitTransferBatch === 'function') {
+          client.commitTransferBatch(app, result);
+        }
         if (window.PikoSoundsScreen && typeof window.PikoSoundsScreen.render === 'function') {
           window.PikoSoundsScreen.render();
         }

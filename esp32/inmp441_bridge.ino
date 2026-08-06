@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include <string.h>
+#include <math.h>
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
@@ -66,6 +67,31 @@ unsigned long tftStateSince = 0;
 #define TFT_DONE_HOLD_MS 2500
 
 // =====================================================
+// 录音中 TFT 实时频谱（确认 INMP441 有输入）
+// 160×128 landscape：顶栏 REC + 下方柱状频谱
+// =====================================================
+#define FFT_N 256
+#define SPECTRUM_BARS 32
+#define SPECTRUM_INTERVAL_MS 80
+#define SPEC_TOP 18
+#define SPEC_BOTTOM 126
+#define SPEC_LEFT 2
+#define SPEC_RIGHT 158
+// 低于此幅度视为安静（与 SOUND_THRESHOLD 同量级，避免空噪声刷满屏）
+#define SPECTRUM_FLOOR 5000.0f
+// 与前端 FieldRecorder.MAX_DURATION_SEC=20 对齐
+#define RECORD_MAX_MS 20000UL
+
+float fftReal[FFT_N];
+float fftImag[FFT_N];
+uint8_t spectrumBars[SPECTRUM_BARS];
+uint8_t spectrumBarsPrev[SPECTRUM_BARS];
+unsigned long lastSpectrumTime = 0;
+bool spectrumViewReady = false;
+unsigned long recordingStartedAt = 0;
+int lastTimerSecShown = -1;
+
+// =====================================================
 // 音频参数
 // =====================================================
 #define SAMPLE_RATE   16000
@@ -115,7 +141,7 @@ char commandBuffer[48];
 size_t commandLength = 0;
 
 // =====================================================
-// TFT 状态显示
+// TFT 状态显示 + 录音频谱
 // =====================================================
 const char *tftStateLabel(TftState state) {
   switch (state) {
@@ -141,9 +167,271 @@ uint16_t tftStateColor(TftState state) {
   }
 }
 
+void resetSpectrumBars() {
+  memset(spectrumBars, 0, sizeof(spectrumBars));
+  memset(spectrumBarsPrev, 0, sizeof(spectrumBarsPrev));
+  lastSpectrumTime = 0;
+  spectrumViewReady = false;
+}
+
+// 原地 radix-2 FFT（float，无外部库）
+void fftRadix2(float *real, float *imag, int n) {
+  int j = 0;
+  for (int i = 0; i < n - 1; i++) {
+    if (i < j) {
+      float tr = real[i];
+      real[i] = real[j];
+      real[j] = tr;
+      float ti = imag[i];
+      imag[i] = imag[j];
+      imag[j] = ti;
+    }
+    int k = n >> 1;
+    while (k <= j) {
+      j -= k;
+      k >>= 1;
+    }
+    j += k;
+  }
+
+  for (int len = 2; len <= n; len <<= 1) {
+    float ang = -2.0f * PI / static_cast<float>(len);
+    float wlenRe = cosf(ang);
+    float wlenIm = sinf(ang);
+    for (int i = 0; i < n; i += len) {
+      float wRe = 1.0f;
+      float wIm = 0.0f;
+      int half = len >> 1;
+      for (int k = 0; k < half; k++) {
+        int i0 = i + k;
+        int i1 = i0 + half;
+        float tRe = wRe * real[i1] - wIm * imag[i1];
+        float tIm = wRe * imag[i1] + wIm * real[i1];
+        real[i1] = real[i0] - tRe;
+        imag[i1] = imag[i0] - tIm;
+        real[i0] += tRe;
+        imag[i0] += tIm;
+        float nextRe = wRe * wlenRe - wIm * wlenIm;
+        wIm = wRe * wlenIm + wIm * wlenRe;
+        wRe = nextRe;
+      }
+    }
+  }
+}
+
+void beginSpectrumView() {
+  resetSpectrumBars();
+  spectrumViewReady = true;
+  lastTimerSecShown = -1;
+
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_RED);
+  tft.setCursor(4, 4);
+  tft.print("REC");
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(32, 4);
+  tft.print("spectrum");
+
+  // 底部分隔线
+  tft.drawFastHLine(0, SPEC_TOP - 2, tft.width(), ST77XX_WHITE);
+  drawRecordingTimer(millis());
+}
+
+// 顶栏右侧倒计时：20s → 0s
+void drawRecordingTimer(unsigned long now) {
+  if (!spectrumViewReady) {
+    return;
+  }
+
+  unsigned long elapsed = 0;
+  if (recordingStartedAt != 0 && now >= recordingStartedAt) {
+    elapsed = now - recordingStartedAt;
+  }
+  if (elapsed > RECORD_MAX_MS) {
+    elapsed = RECORD_MAX_MS;
+  }
+
+  int remainSec = static_cast<int>(
+    (RECORD_MAX_MS - elapsed + 999UL) / 1000UL
+  );
+  if (remainSec < 0) {
+    remainSec = 0;
+  }
+  if (remainSec == lastTimerSecShown) {
+    return;
+  }
+  lastTimerSecShown = remainSec;
+
+  tft.fillRect(108, 2, 52, 12, ST77XX_BLACK);
+  tft.setTextWrap(false);
+  tft.setTextSize(1);
+  tft.setTextColor(
+    remainSec <= 3 ? ST77XX_RED : ST77XX_YELLOW
+  );
+  tft.setCursor(114, 4);
+  if (remainSec < 10) {
+    tft.print(' ');
+  }
+  tft.print(remainSec);
+  tft.print('s');
+}
+
+void drawSpectrumBars() {
+  const int plotW = SPEC_RIGHT - SPEC_LEFT;
+  const int plotH = SPEC_BOTTOM - SPEC_TOP;
+  const int barW = plotW / SPECTRUM_BARS;
+  if (barW <= 0 || plotH <= 0) {
+    return;
+  }
+
+  for (int b = 0; b < SPECTRUM_BARS; b++) {
+    uint8_t h = spectrumBars[b];
+    uint8_t prev = spectrumBarsPrev[b];
+    if (h == prev) {
+      continue;
+    }
+
+    int x = SPEC_LEFT + b * barW;
+    int bw = barW - 1;
+    if (bw < 1) bw = 1;
+
+    int bh = (static_cast<int>(h) * plotH) / 255;
+    int prevBh = (static_cast<int>(prev) * plotH) / 255;
+
+    if (bh < prevBh) {
+      tft.fillRect(
+        x,
+        SPEC_BOTTOM - prevBh,
+        bw,
+        prevBh - bh,
+        ST77XX_BLACK
+      );
+    }
+
+    if (bh > 0) {
+      uint16_t color = ST77XX_GREEN;
+      if (h > 200) {
+        color = ST77XX_RED;
+      } else if (h > 120) {
+        color = ST77XX_YELLOW;
+      }
+      tft.fillRect(
+        x,
+        SPEC_BOTTOM - bh,
+        bw,
+        bh,
+        color
+      );
+    }
+
+    spectrumBarsPrev[b] = h;
+  }
+}
+
+void computeSpectrumBars(const int16_t *pcm, int sampleCount) {
+  if (sampleCount <= 0) {
+    memset(spectrumBars, 0, sizeof(spectrumBars));
+    return;
+  }
+
+  for (int i = 0; i < FFT_N; i++) {
+    float sample = 0.0f;
+    if (i < sampleCount) {
+      sample = static_cast<float>(pcm[i]);
+    }
+    // Hann 窗
+    float w = 0.5f * (
+      1.0f - cosf(
+        2.0f * PI * static_cast<float>(i) /
+        static_cast<float>(FFT_N - 1)
+      )
+    );
+    fftReal[i] = sample * w;
+    fftImag[i] = 0.0f;
+  }
+
+  fftRadix2(fftReal, fftImag, FFT_N);
+
+  const int usable = FFT_N / 2;
+  float mags[SPECTRUM_BARS];
+  float peak = SPECTRUM_FLOOR;
+
+  for (int b = 0; b < SPECTRUM_BARS; b++) {
+    int i0 = 1 + (b * (usable - 1)) / SPECTRUM_BARS;
+    int i1 = 1 + ((b + 1) * (usable - 1)) / SPECTRUM_BARS;
+    if (i1 <= i0) {
+      i1 = i0 + 1;
+    }
+
+    float maxM = 0.0f;
+    for (int i = i0; i < i1 && i < usable; i++) {
+      float re = fftReal[i];
+      float im = fftImag[i];
+      float m = sqrtf(re * re + im * im);
+      if (m > maxM) {
+        maxM = m;
+      }
+    }
+    mags[b] = maxM;
+    if (maxM > peak) {
+      peak = maxM;
+    }
+  }
+
+  // 轻微参考：有声时柱高明显；安静时接近底部
+  float scale = peak;
+  if (scale < SPECTRUM_FLOOR) {
+    scale = SPECTRUM_FLOOR;
+  }
+
+  for (int b = 0; b < SPECTRUM_BARS; b++) {
+    float norm = mags[b] / scale;
+    if (norm < 0.0f) norm = 0.0f;
+    if (norm > 1.0f) norm = 1.0f;
+    spectrumBars[b] = static_cast<uint8_t>(norm * 255.0f);
+  }
+}
+
+void updateSpectrumDisplay(const int16_t *pcm, int sampleCount) {
+  if (!spectrumViewReady || tftState != TFT_STATE_RECORDING) {
+    return;
+  }
+
+  unsigned long now = millis();
+  if (
+    lastSpectrumTime != 0 &&
+    now - lastSpectrumTime < SPECTRUM_INTERVAL_MS
+  ) {
+    return;
+  }
+  lastSpectrumTime = now;
+
+  computeSpectrumBars(pcm, sampleCount);
+  drawSpectrumBars();
+  drawRecordingTimer(now);
+}
+
+void pollRecordingTimeout() {
+  if (!recording || recordingStartedAt == 0) {
+    return;
+  }
+  if (millis() - recordingStartedAt >= RECORD_MAX_MS) {
+    setRecording(false, "timeout");
+  }
+}
+
 void showTftState(TftState state) {
   tftState = state;
   tftStateSince = millis();
+
+  if (state == TFT_STATE_RECORDING) {
+    beginSpectrumView();
+    return;
+  }
+
+  resetSpectrumBars();
 
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextWrap(false);
@@ -244,6 +532,8 @@ void setRecording(bool enabled, const char *source) {
 
     seq = 0;
     recording = true;
+    recordingStartedAt = millis();
+    lastTimerSecShown = -1;
     lastMetricsTime = millis();
     showTftState(TFT_STATE_RECORDING);
 
@@ -252,6 +542,8 @@ void setRecording(bool enabled, const char *source) {
 
   // 先停止继续发送 PCM
   recording = false;
+  recordingStartedAt = 0;
+  lastTimerSecShown = -1;
 
   // 等待已进入串口缓冲区的 PCM 发完
   Serial.flush();
@@ -488,7 +780,10 @@ void handleSerialCommand(const char *command) {
     return;
   }
   if (strcmp(command, "TFT_RECORDING") == 0) {
-    showTftState(TFT_STATE_RECORDING);
+    // 已在录音频谱视图时不要整屏重绘，避免 Bridge 回写冲掉动画
+    if (tftState != TFT_STATE_RECORDING || !spectrumViewReady) {
+      showTftState(TFT_STATE_RECORDING);
+    }
     return;
   }
   if (strcmp(command, "TFT_SAVING") == 0) {
@@ -754,6 +1049,7 @@ void loop() {
   pollSerial();
   pollButton();
   pollTftTimeouts();
+  pollRecordingTimeout();
 
   bool recordingAtReadStart =
     recording;
@@ -766,9 +1062,23 @@ void loop() {
   pollSerial();
   pollButton();
   pollTftTimeouts();
+  pollRecordingTimeout();
 
   if (sampleCount <= 0) {
     delay(1);
+    return;
+  }
+
+  // 超时已停录则不再发包
+  if (!recording) {
+    unsigned long currentTime = millis();
+    if (
+      currentTime - lastMetricsTime >=
+        METRICS_INTERVAL_MS
+    ) {
+      lastMetricsTime = currentTime;
+      printMetrics(sampleCount);
+    }
     return;
   }
 
@@ -781,28 +1091,18 @@ void loop() {
     sendPcmFrame(
       sampleCount
     );
-
+    // 用同一帧 INMP441 PCM 刷新 TFT 频谱（节流，不挡串口）
+    updateSpectrumDisplay(
+      pcmBuffer,
+      sampleCount
+    );
     return;
   }
 
   // 读取期间刚开始录音，
-  // 当前帧丢弃，从下一帧开始发送。
-  if (recording) {
-    return;
-  }
-
-  unsigned long currentTime =
-    millis();
-
-  if (
-    currentTime - lastMetricsTime >=
-      METRICS_INTERVAL_MS
-  ) {
-    lastMetricsTime =
-      currentTime;
-
-    printMetrics(
-      sampleCount
-    );
-  }
+  // 当前帧丢弃不发包，但仍可画频谱确认有输入。
+  updateSpectrumDisplay(
+    pcmBuffer,
+    sampleCount
+  );
 }

@@ -27,6 +27,24 @@ sync_runtime() {
   cp -f "$SRC"/*.py "$RUNTIME/"
   if [ -f "$SRC/.env" ]; then cp -f "$SRC/.env" "$RUNTIME/.env"; fi
   if [ -f "$SRC/.env.example" ]; then cp -f "$SRC/.env.example" "$RUNTIME/.env.example"; fi
+  # Finder-friendly pointer in BOTH project + runtime sounds dirs
+  cat >"$SRC/sounds/WHERE_ARE_MY_RECORDINGS.txt" <<PTR
+Piko recording WAVs (Mac LaunchAgent)
+
+Active local store (when Supabase is NOT configured):
+  $RUNTIME/sounds/
+
+Project folder python-service/sounds/ is usually EMPTY on Mac —
+the running service uses Application Support (above), not this Desktop path.
+
+Check: curl -s http://127.0.0.1:8001/health | python3 -m json.tool
+Look for: supabase.backend / supabase.localDir / supabase.hint
+
+To use Supabase: fill SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in python-service/.env
+then: $0 sync && $0 install
+then: cd "$RUNTIME" && "$PY" migrate_local_to_supabase.py
+PTR
+  cp -f "$SRC/sounds/WHERE_ARE_MY_RECORDINGS.txt" "$RUNTIME/sounds/WHERE_ARE_MY_RECORDINGS.txt"
   echo "[sync] $SRC → $RUNTIME"
 }
 
@@ -112,8 +130,9 @@ EOF
 status() {
   if [ -f "$PLIST" ]; then echo "[plist] $PLIST"; else echo "[plist] not installed"; fi
   launchctl print "gui/$(id -u)/${LABEL}" 2>/dev/null | head -n 24 || echo "[launchd] not loaded"
+  echo "[sounds dir] $RUNTIME/sounds"
   echo "[health]"
-  curl -sS "http://127.0.0.1:8001/health" 2>/dev/null | head -c 220 || echo "python down"
+  curl -sS "http://127.0.0.1:8001/health" 2>/dev/null | head -c 500 || echo "python down"
   echo
   echo "[err tail]"
   tail -n 6 "$LOG_DIR/python.err.log" 2>/dev/null || true

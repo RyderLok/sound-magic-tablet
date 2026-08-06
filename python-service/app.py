@@ -38,6 +38,22 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def _on_startup() -> None:
+    config.write_local_sounds_pointer()
+    st = sounds_store.status()
+    print(
+        "[sounds]",
+        f"backend={st.get('backend')}",
+        f"configured={st.get('configured')}",
+        f"localDir={st.get('localDir')}",
+        f"localCount={st.get('localCount')}",
+        flush=True,
+    )
+    if not st.get("configured"):
+        print("[sounds]", st.get("hint"), flush=True)
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     base = f"http://127.0.0.1:{config.PORT}"
@@ -135,6 +151,17 @@ async def sounds_patch(sound_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
     if not row:
         raise HTTPException(status_code=404, detail="Sound not found")
     return {"status": "ok", "sound": row}
+
+
+@app.delete("/sounds/{sound_id}")
+async def sounds_delete(sound_id: str) -> Dict[str, Any]:
+    try:
+        deleted = await sounds_store.delete_sound(sound_id)
+    except Exception as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Sound not found")
+    return {"status": "ok", "id": sound_id}
 
 
 @app.post("/analyze/wav")

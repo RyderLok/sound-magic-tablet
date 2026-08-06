@@ -1,8 +1,8 @@
 /**
- * P3 · My sounds（Figma 1:49）
+ * P3 · New Sounds（Figma 1:49）
  *
- * 只负责这一屏的渲染与交互，数据与选择状态仍走既有的
- * App.soundLibrary / PlateManager，不复制业务逻辑。
+ * 只展示「最近一次上传」的录音；历史录音在 My sounds。
+ * 选择状态仍走 App.soundLibrary / PlateManager。
  */
 (function () {
   'use strict';
@@ -13,6 +13,10 @@
 
   function samples() {
     var a = app();
+    var client = window.SoundsApiClient;
+    if (a && client && typeof client.listLatestSamples === 'function') {
+      return client.listLatestSamples(a);
+    }
     return (a && Array.isArray(a.soundLibrary)) ? a.soundLibrary : [];
   }
 
@@ -50,7 +54,7 @@
 
     var list = samples();
     if (!list.length) {
-      track.innerHTML = '<p class="sounds-empty">还没有录音 — 先去录一段</p>';
+      track.innerHTML = '<p class="sounds-empty">还没有新录音 — 先去 Input 上传</p>';
       updateFooter();
       return;
     }

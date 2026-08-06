@@ -12,6 +12,7 @@
   var screens = {
     splash: 'splashView',
     collect: 'collectView',
+    mySounds: 'mySoundsView',
     transfer: 'transferView',
     sounds: 'soundsView',
     magic: 'magicView',
@@ -23,7 +24,7 @@
 
   // 主流程顺序，用来判断这次切屏是前进还是后退
   var FLOW = [
-    'splash', 'collect', 'transfer', 'sounds', 'magic', 'brush', 'analysis', 'gallery', 'printing'
+    'splash', 'collect', 'mySounds', 'transfer', 'sounds', 'magic', 'brush', 'analysis', 'gallery', 'printing'
   ];
 
   var ANIM_CLASSES = [
@@ -127,7 +128,7 @@
   /** Collect 中央磁贴进入对应流程（由轮播脚本在点中心卡时调用） */
   function goCollect(target) {
     if (target === 'input') {
-      // Input → 录音笔上传页 → 完成后进 My Sounds
+      // Input → 录音笔上传页 → 完成后进 New Sounds
       show('transfer');
     } else if (target === 'draw') {
       var hasBrushes = window.PlateManager && window.PlateManager.count() > 0;
@@ -207,8 +208,18 @@
     bindTiles();
     bindRecorderStatus();
     bindGallery();
+    bindCollectHistory();
     show('splash');
     setTimeout(goFromSplash, SPLASH_MS);
+  }
+
+  function bindCollectHistory() {
+    var btn = el('collectHistoryBtn');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        show('mySounds');
+      });
+    }
   }
 
   function bindGallery() {

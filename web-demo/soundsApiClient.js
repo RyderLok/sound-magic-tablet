@@ -5,6 +5,7 @@
   'use strict';
 
   var DEFAULT_BASE = 'http://127.0.0.1:8001';
+  var lastBackendStatus = null;
 
   function baseUrl() {
     if (window.App && window.App.pythonBaseUrl) return window.App.pythonBaseUrl;
@@ -19,6 +20,7 @@
       var res = await fetch(baseUrl() + '/sounds', { cache: 'no-store', signal: ctrl.signal });
       if (!res.ok) throw new Error('GET /sounds failed: ' + res.status);
       var data = await res.json();
+      lastBackendStatus = data.backend || lastBackendStatus;
       return Array.isArray(data.sounds) ? data.sounds : [];
     } finally {
       clearTimeout(t);
@@ -42,9 +44,53 @@
     return await res.blob();
   }
 
+  async function deleteSound(id) {
+    if (!id) throw new Error('deleteSound: missing id');
+    var res = await fetch(baseUrl() + '/sounds/' + encodeURIComponent(id), {
+      method: 'DELETE',
+      cache: 'no-store'
+    });
+    if (res.status === 404) return { status: 'missing', id: id };
+    if (!res.ok) throw new Error('DELETE /sounds/' + id + ' failed: ' + res.status);
+    try {
+      return await res.json();
+    } catch (e) {
+      return { status: 'ok', id: id };
+    }
+  }
+
+  async function fetchBackendStatus() {
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, 5000);
+    try {
+      var res = await fetch(baseUrl() + '/health', { cache: 'no-store', signal: ctrl.signal });
+      if (!res.ok) throw new Error('GET /health failed: ' + res.status);
+      var data = await res.json();
+      lastBackendStatus = data.supabase || null;
+      return lastBackendStatus;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  function formatBackendHint(st) {
+    if (!st) return 'Storage: unknown (Python :8001 unreachable?)';
+    var backend = st.backend || (st.configured ? 'supabase' : 'local');
+    if (backend === 'supabase') {
+      return 'Storage: Supabase · cloud (browser cache is IndexedDB only)';
+    }
+    var dir = st.localDir || '';
+    var short = dir;
+    if (dir.length > 64) {
+      short = '…' + dir.slice(-56);
+    }
+    var n = typeof st.localCount === 'number' ? st.localCount : '?';
+    return 'Storage: local · ' + n + ' files · ' + short;
+  }
+
   /**
    * Import remote sounds into App.soundLibrary (skip existing backend ids).
-   * Returns { imported, total }.
+   * Returns { imported, importedIds, total, backend }.
    */
   async function syncIntoApp(app) {
     if (!app || typeof app.addFile !== 'function') {
@@ -52,6 +98,7 @@
     }
     var rows = await listSounds();
     var imported = 0;
+    var importedIds = [];
     var existing = new Set(
       (app.soundLibrary || [])
         .map(function (s) { return s.backendId || s.id; })
@@ -82,11 +129,108 @@
         }
         if (typeof app.persistSample === 'function') app.persistSample(sample);
         existing.add(row.id);
+        importedIds.push(sample.id);
         imported += 1;
       }
     }
 
-    return { imported: imported, total: rows.length, sounds: rows };
+    return {
+      imported: imported,
+      importedIds: importedIds,
+      total: rows.length,
+      sounds: rows,
+      backend: lastBackendStatus
+    };
+  }
+
+  /** 仅 Collect→Transfer 本次新导入进 New Sounds；其余一律 My sounds 历史 */
+  var LATEST_BATCH_KEY = 'piko.latestSoundBatchIds';
+
+  function loadLatestBatch() {
+    try {
+      var raw = localStorage.getItem(LATEST_BATCH_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.filter(Boolean) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function setLatestBatch(ids) {
+    var unique = [];
+    var seen = {};
+    (ids || []).forEach(function (id) {
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      unique.push(String(id));
+    });
+    try {
+      localStorage.setItem(LATEST_BATCH_KEY, JSON.stringify(unique));
+    } catch (e) { /* noop */ }
+    return unique;
+  }
+
+  function pruneLatestBatch(lib) {
+    var list = Array.isArray(lib) ? lib : [];
+    var batch = loadLatestBatch();
+    if (!batch.length) return batch;
+    var alive = batch.filter(function (id) {
+      return list.some(function (s) {
+        return s && (s.id === id || s.backendId === id);
+      });
+    });
+    if (alive.length !== batch.length) setLatestBatch(alive);
+    return alive;
+  }
+
+  /** 进入 Transfer：清空 New Sounds，旧批次全部回到历史 */
+  function beginTransferSession() {
+    return setLatestBatch([]);
+  }
+
+  /**
+   * Transfer 同步结束：New Sounds = 本次新导入的 id；
+   * 若本次没有新导入则为空（不按时间簇猜）。
+   */
+  function commitTransferBatch(app, syncResult) {
+    var ids = (syncResult && syncResult.importedIds) || [];
+    return setLatestBatch(ids);
+  }
+
+  function sampleInBatch(sample, batchSet) {
+    if (!sample || !batchSet) return false;
+    if (batchSet[sample.id]) return true;
+    if (sample.backendId && batchSet[sample.backendId]) return true;
+    return false;
+  }
+
+  function batchSetFromIds(ids) {
+    var set = Object.create(null);
+    (ids || []).forEach(function (id) { set[id] = true; });
+    return set;
+  }
+
+  function listLatestSamples(app) {
+    var lib = (app && app.soundLibrary) || [];
+    var batch = pruneLatestBatch(lib);
+    if (!batch.length) return [];
+    var set = batchSetFromIds(batch);
+    return lib.filter(function (s) { return sampleInBatch(s, set); });
+  }
+
+  function listHistorySamples(app) {
+    var lib = (app && app.soundLibrary) || [];
+    var batch = pruneLatestBatch(lib);
+    if (!batch.length) return lib.slice();
+    var set = batchSetFromIds(batch);
+    return lib.filter(function (s) { return !sampleInBatch(s, set); });
+  }
+
+  function forgetFromLatestBatch(sampleId, backendId) {
+    var batch = loadLatestBatch().filter(function (id) {
+      return id !== sampleId && id !== backendId;
+    });
+    return setLatestBatch(batch);
   }
 
   window.SoundsApiClient = {
@@ -95,6 +239,17 @@
     getSound: getSound,
     audioUrl: audioUrl,
     fetchAudioBlob: fetchAudioBlob,
-    syncIntoApp: syncIntoApp
+    deleteSound: deleteSound,
+    syncIntoApp: syncIntoApp,
+    fetchBackendStatus: fetchBackendStatus,
+    formatBackendHint: formatBackendHint,
+    getLastBackendStatus: function () { return lastBackendStatus; },
+    loadLatestBatch: loadLatestBatch,
+    setLatestBatch: setLatestBatch,
+    beginTransferSession: beginTransferSession,
+    commitTransferBatch: commitTransferBatch,
+    listLatestSamples: listLatestSamples,
+    listHistorySamples: listHistorySamples,
+    forgetFromLatestBatch: forgetFromLatestBatch
   };
 })();
