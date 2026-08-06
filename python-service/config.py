@@ -25,9 +25,13 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(_ROOT / ".env")
 
-HOST = "0.0.0.0"
-PORT = 8001
+HOST = os.environ.get("HOST", "0.0.0.0").strip() or "0.0.0.0"
+PORT = int(os.environ.get("PORT", "8001") or "8001")
 WS_AUDIO_PATH = "/ws/audio"
+
+# Public origin for /health links when deployed (e.g. https://piko-api.example.com).
+# If empty, health falls back to request base or loopback.
+PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
 
 SAMPLE_RATE = 16000
 FRAME_SAMPLES = 512
@@ -37,13 +41,17 @@ PYTHON_WEIGHT_DEFAULT = 0.6
 OUTPUT_DIR = _ROOT / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# CORS for web-demo on :8000
-CORS_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-]
+# CORS for web-demo on :8000 + iPad / hosted origins (override with CORS_ORIGINS=a,b)
+_cors_env = (os.environ.get("CORS_ORIGINS") or "").strip()
+if _cors_env:
+    CORS_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    CORS_ORIGINS = [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ]
 
 # Optional SiliconFlow Qwen3-Omni (SILICONFLOW_API_KEY in env / .env)
 SILICONFLOW_API_KEY = (os.environ.get("SILICONFLOW_API_KEY") or "").strip()

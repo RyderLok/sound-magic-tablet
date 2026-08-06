@@ -1,57 +1,175 @@
 /**
- * Piko Sounds API client — Python :8001 → Supabase / local sounds store.
+ * Piko Sounds API client
+ *
+ * Desktop (default, unchanged): Python :8001 → Supabase / local.
+ * iPad / offline Python: optional direct Supabase read via window.PIKO_SUPABASE
+ *   (anon key only). Upload / delete still go through Python when available.
  */
 (function () {
   'use strict';
 
   var DEFAULT_BASE = 'http://127.0.0.1:8001';
   var lastBackendStatus = null;
+  var lastTransport = 'python'; // 'python' | 'cloud'
 
   function baseUrl() {
     if (window.App && window.App.pythonBaseUrl) return window.App.pythonBaseUrl;
     if (window.PYTHON_SERVICE_URL) return String(window.PYTHON_SERVICE_URL).replace(/\/$/, '');
+    if (window.PikoServiceEndpoints && typeof window.PikoServiceEndpoints.resolvePythonEndpoints === 'function') {
+      var ep = window.PikoServiceEndpoints.resolvePythonEndpoints();
+      if (ep && ep.http) return ep.http;
+    }
     return DEFAULT_BASE;
   }
 
-  async function listSounds() {
+  function cloudConfig() {
+    var cfg = window.PIKO_SUPABASE || null;
+    if (!cfg) return null;
+    var url = String(cfg.url || '').trim().replace(/\/$/, '');
+    var anonKey = String(cfg.anonKey || cfg.anon_key || '').trim();
+    var bucket = String(cfg.bucket || 'sounds').trim() || 'sounds';
+    if (!url || !anonKey) return null;
+    return { url: url, anonKey: anonKey, bucket: bucket };
+  }
+
+  function cloudHeaders(cfg) {
+    return {
+      apikey: cfg.anonKey,
+      Authorization: 'Bearer ' + cfg.anonKey
+    };
+  }
+
+  function markPython(status) {
+    lastTransport = 'python';
+    if (status) lastBackendStatus = status;
+  }
+
+  function markCloud() {
+    lastTransport = 'cloud';
+    var cfg = cloudConfig();
+    lastBackendStatus = {
+      configured: true,
+      backend: 'supabase',
+      sourceOfTruth: 'supabase',
+      transport: 'cloud-direct',
+      bucket: cfg && cfg.bucket,
+      hint: 'Reading Supabase directly (Python :8001 unreachable). Upload still needs a writer (desktop Python or future iPad upload).'
+    };
+  }
+
+  async function listSoundsPython() {
     var ctrl = new AbortController();
     var t = setTimeout(function () { ctrl.abort(); }, 8000);
     try {
       var res = await fetch(baseUrl() + '/sounds', { cache: 'no-store', signal: ctrl.signal });
       if (!res.ok) throw new Error('GET /sounds failed: ' + res.status);
       var data = await res.json();
-      lastBackendStatus = data.backend || lastBackendStatus;
+      markPython(data.backend || lastBackendStatus);
       return Array.isArray(data.sounds) ? data.sounds : [];
     } finally {
       clearTimeout(t);
     }
   }
 
-  async function getSound(id) {
+  async function listSoundsCloud() {
+    var cfg = cloudConfig();
+    if (!cfg) throw new Error('Cloud config missing (set window.PIKO_SUPABASE)');
+    var res = await fetch(
+      cfg.url + '/rest/v1/sounds?select=*&order=created_at.desc',
+      { cache: 'no-store', headers: Object.assign({ Accept: 'application/json' }, cloudHeaders(cfg)) }
+    );
+    if (!res.ok) throw new Error('Supabase list failed: ' + res.status);
+    var rows = await res.json();
+    markCloud();
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async function listSounds() {
+    try {
+      return await listSoundsPython();
+    } catch (err) {
+      if (!cloudConfig()) throw err;
+      console.warn('[sounds] Python list failed, trying Supabase direct:', err && err.message);
+      return await listSoundsCloud();
+    }
+  }
+
+  async function getSoundPython(id) {
     var res = await fetch(baseUrl() + '/sounds/' + encodeURIComponent(id), { cache: 'no-store' });
     if (!res.ok) throw new Error('GET /sounds/' + id + ' failed: ' + res.status);
     var data = await res.json();
+    markPython(lastBackendStatus);
     return data.sound || null;
   }
 
+  async function getSoundCloud(id) {
+    var cfg = cloudConfig();
+    if (!cfg) throw new Error('Cloud config missing');
+    var res = await fetch(
+      cfg.url + '/rest/v1/sounds?id=eq.' + encodeURIComponent(id) + '&select=*',
+      { cache: 'no-store', headers: Object.assign({ Accept: 'application/json' }, cloudHeaders(cfg)) }
+    );
+    if (!res.ok) throw new Error('Supabase get failed: ' + res.status);
+    var rows = await res.json();
+    markCloud();
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  }
+
+  async function getSound(id) {
+    try {
+      return await getSoundPython(id);
+    } catch (err) {
+      if (!cloudConfig()) throw err;
+      return await getSoundCloud(id);
+    }
+  }
+
   function audioUrl(id) {
+    // Prefer Python proxy URL (works with private bucket via service role).
     return baseUrl() + '/sounds/' + encodeURIComponent(id) + '/audio';
   }
 
-  async function fetchAudioBlob(id) {
+  async function fetchAudioBlobPython(id) {
     var res = await fetch(audioUrl(id), { cache: 'no-store' });
     if (!res.ok) throw new Error('GET audio failed: ' + res.status);
+    markPython(lastBackendStatus);
     return await res.blob();
+  }
+
+  async function fetchAudioBlobCloud(id) {
+    var cfg = cloudConfig();
+    if (!cfg) throw new Error('Cloud config missing');
+    var row = await getSoundCloud(id);
+    if (!row || !row.storage_path) throw new Error('Sound missing storage_path');
+    var res = await fetch(
+      cfg.url + '/storage/v1/object/' + encodeURIComponent(cfg.bucket) + '/' + String(row.storage_path).replace(/^\/+/, ''),
+      { cache: 'no-store', headers: cloudHeaders(cfg) }
+    );
+    if (!res.ok) throw new Error('Supabase audio failed: ' + res.status);
+    markCloud();
+    return await res.blob();
+  }
+
+  async function fetchAudioBlob(id) {
+    try {
+      return await fetchAudioBlobPython(id);
+    } catch (err) {
+      if (!cloudConfig()) throw err;
+      console.warn('[sounds] Python audio failed, trying Supabase direct:', err && err.message);
+      return await fetchAudioBlobCloud(id);
+    }
   }
 
   async function deleteSound(id) {
     if (!id) throw new Error('deleteSound: missing id');
+    // Writes stay on Python (service role). Cloud-direct delete not enabled for anon.
     var res = await fetch(baseUrl() + '/sounds/' + encodeURIComponent(id), {
       method: 'DELETE',
       cache: 'no-store'
     });
     if (res.status === 404) return { status: 'missing', id: id };
     if (!res.ok) throw new Error('DELETE /sounds/' + id + ' failed: ' + res.status);
+    markPython(lastBackendStatus);
     try {
       return await res.json();
     } catch (e) {
@@ -66,17 +184,34 @@
       var res = await fetch(baseUrl() + '/health', { cache: 'no-store', signal: ctrl.signal });
       if (!res.ok) throw new Error('GET /health failed: ' + res.status);
       var data = await res.json();
-      lastBackendStatus = data.supabase || null;
+      markPython(data.supabase || null);
+      if (lastBackendStatus && typeof lastBackendStatus === 'object') {
+        lastBackendStatus = Object.assign({}, lastBackendStatus, { transport: 'python' });
+      }
       return lastBackendStatus;
+    } catch (err) {
+      if (cloudConfig()) {
+        markCloud();
+        return lastBackendStatus;
+      }
+      throw err;
     } finally {
       clearTimeout(t);
     }
   }
 
   function formatBackendHint(st) {
-    if (!st) return 'Storage: unknown (Python :8001 unreachable?)';
+    if (!st) {
+      return cloudConfig()
+        ? 'Storage: Supabase ready (fill policies) · Python :8001 unreachable'
+        : 'Storage: unknown (Python :8001 unreachable?)';
+    }
+    var transport = st.transport || lastTransport;
     var backend = st.backend || (st.configured ? 'supabase' : 'local');
     if (backend === 'supabase') {
+      if (transport === 'cloud-direct' || transport === 'cloud') {
+        return 'Storage: Supabase · direct read (desktop upload still via Python)';
+      }
       return 'Storage: Supabase · cloud (browser cache is IndexedDB only)';
     }
     var dir = st.localDir || '';
@@ -139,7 +274,8 @@
       importedIds: importedIds,
       total: rows.length,
       sounds: rows,
-      backend: lastBackendStatus
+      backend: lastBackendStatus,
+      transport: lastTransport
     };
   }
 
@@ -263,6 +399,7 @@
 
   window.SoundsApiClient = {
     baseUrl: baseUrl,
+    cloudConfig: cloudConfig,
     listSounds: listSounds,
     getSound: getSound,
     audioUrl: audioUrl,
@@ -272,6 +409,7 @@
     fetchBackendStatus: fetchBackendStatus,
     formatBackendHint: formatBackendHint,
     getLastBackendStatus: function () { return lastBackendStatus; },
+    getLastTransport: function () { return lastTransport; },
     loadLatestBatch: loadLatestBatch,
     setLatestBatch: setLatestBatch,
     beginTransferSession: beginTransferSession,

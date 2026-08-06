@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
@@ -55,9 +55,19 @@ def _on_startup() -> None:
 
 
 @app.get("/health")
-def health() -> Dict[str, Any]:
-    base = f"http://127.0.0.1:{config.PORT}"
-    ws = f"ws://127.0.0.1:{config.PORT}{config.WS_AUDIO_PATH}"
+def health(request: Request) -> Dict[str, Any]:
+    public = (config.PUBLIC_BASE_URL or "").rstrip("/")
+    if not public:
+        # Prefer the URL the client actually used (works behind tunnels / cloud hosts).
+        public = str(request.base_url).rstrip("/")
+    if public.startswith("https://"):
+        ws_base = "wss://" + public[len("https://") :]
+    elif public.startswith("http://"):
+        ws_base = "ws://" + public[len("http://") :]
+    else:
+        public = f"http://127.0.0.1:{config.PORT}"
+        ws_base = f"ws://127.0.0.1:{config.PORT}"
+    ws = f"{ws_base}{config.WS_AUDIO_PATH}"
     omni = {"configured": False}
     try:
         from siliconflow_omni import status as omni_status
@@ -67,13 +77,13 @@ def health() -> Dict[str, Any]:
         pass
     return {
         "status": "ok",
-        "http": base,
+        "http": public,
         "ws": ws,
         "endpoints": {
-            "health": f"{base}/health",
-            "analyzeWav": f"{base}/analyze/wav",
-            "soundsUpload": f"{base}/sounds/upload",
-            "soundsList": f"{base}/sounds",
+            "health": f"{public}/health",
+            "analyzeWav": f"{public}/analyze/wav",
+            "soundsUpload": f"{public}/sounds/upload",
+            "soundsList": f"{public}/sounds",
             "wsAudio": ws,
         },
         "librosa": _librosa_flag(),

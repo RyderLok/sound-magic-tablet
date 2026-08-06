@@ -1,0 +1,9 @@
+.venv/
+.venv-mac/
+__pycache__/
+*.pyc
+.env
+output/
+sounds/
+.pytest_cache/
+*.egg-info/

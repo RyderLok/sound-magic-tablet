@@ -27,6 +27,12 @@ const App = {
     if (this._servicesBootstrapped) return;
     this._servicesBootstrapped = true;
 
+    const endpoints = (window.PikoServiceEndpoints && window.PikoServiceEndpoints.resolvePythonEndpoints)
+      ? window.PikoServiceEndpoints.resolvePythonEndpoints()
+      : { http: "http://127.0.0.1:8001", ws: "ws://127.0.0.1:8001/ws/audio" };
+
+    this.pythonBaseUrl = endpoints.http;
+
     if (!this.esp32AudioAdapter) {
       this.esp32AudioAdapter = new Esp32AudioAdapter({ url: "ws://localhost:8765" });
       window.esp32AudioAdapter = this.esp32AudioAdapter;
@@ -35,8 +41,8 @@ const App = {
 
     if (!this.pythonClient) {
       this.pythonClient = new PythonEnhancementClient({
-        httpBase: "http://localhost:8001",
-        wsUrl: "ws://localhost:8001/ws/audio"
+        httpBase: endpoints.http,
+        wsUrl: endpoints.ws
       });
       window.pythonClient = this.pythonClient;
       this.pythonClient.connect();

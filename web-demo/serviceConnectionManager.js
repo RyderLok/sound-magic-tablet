@@ -6,8 +6,16 @@ class ServiceConnectionManager {
     this._timer = null;
     this._tickInFlight = false;
 
-    this.pythonHttp = "http://127.0.0.1:8001";
-    this.pythonWs = "ws://127.0.0.1:8001/ws/audio";
+    const endpoints = (window.PikoServiceEndpoints && window.PikoServiceEndpoints.resolvePythonEndpoints)
+      ? window.PikoServiceEndpoints.resolvePythonEndpoints()
+      : null;
+
+    this.pythonHttp = (endpoints && endpoints.http) || "http://127.0.0.1:8001";
+    this.pythonWs = (endpoints && endpoints.ws) || "ws://127.0.0.1:8001/ws/audio";
+    this.pythonProbeOrder = (endpoints && endpoints.probeOrder) || [
+      "http://127.0.0.1:8001",
+      "http://localhost:8001"
+    ];
     this.bridgeWs = "ws://127.0.0.1:8765";
     this.bridgeHealthUrls = [
       "http://127.0.0.1:8766/health",
@@ -76,7 +84,8 @@ class ServiceConnectionManager {
   }
 
   async probePythonHealth() {
-    const bases = [this.pythonHttp, "http://localhost:8001"];
+    const bases = (this.pythonProbeOrder || []).slice();
+    if (this.pythonHttp) bases.unshift(this.pythonHttp);
     const seen = new Set();
     for (const base of bases) {
       if (!base || seen.has(base)) continue;
@@ -95,10 +104,31 @@ class ServiceConnectionManager {
   }
 
   applyPythonEndpoints(health, fetchedBase) {
-    const http = health.http || health.endpoints?.health?.replace(/\/health\/?$/, "") || fetchedBase;
-    const ws = health.endpoints?.wsAudio || health.ws || this.pythonWs;
+    const helpers = window.PikoServiceEndpoints;
+    const claimed = (health && (health.http || health.endpoints?.health?.replace(/\/health\/?$/, ""))) || "";
+    let http = fetchedBase || this.pythonHttp;
+    // Prefer the URL we actually reached. Ignore loopback claims from a remote host's /health.
+    if (claimed) {
+      const claimedLoop = helpers ? helpers.isLoopbackHttp(claimed) : /127\.0\.0\.1|localhost/i.test(claimed);
+      const fetchedLoop = helpers ? helpers.isLoopbackHttp(fetchedBase || "") : true;
+      if (!claimedLoop || fetchedLoop) {
+        http = claimed.replace(/\/$/, "");
+      }
+    }
+    if (fetchedBase) http = String(fetchedBase).replace(/\/$/, "");
+
+    let ws = health?.endpoints?.wsAudio || health?.ws || this.pythonWs;
+    if (helpers && helpers.httpToWs) {
+      const derived = helpers.httpToWs(http);
+      const wsLoop = /127\.0\.0\.1|localhost/i.test(String(ws || ""));
+      const httpLoop = helpers.isLoopbackHttp(http);
+      if (!ws || (wsLoop && !httpLoop) || derived) {
+        ws = derived || ws;
+      }
+    }
     if (http) this.pythonHttp = http.replace(/\/$/, "");
     if (ws) this.pythonWs = ws;
+    if (this.app) this.app.pythonBaseUrl = this.pythonHttp;
   }
 
   async probeBridgeHealth() {

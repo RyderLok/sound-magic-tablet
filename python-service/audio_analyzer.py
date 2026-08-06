@@ -100,7 +100,7 @@ def _shape_profile_from_array(y: np.ndarray, sr: int, features: Optional[Dict[st
         flux_arr = np.sum(np.maximum(np.diff(norm_frames, axis=1, prepend=norm_frames[:, :1]), 0.0), axis=0)
         spectral_flux = _soft_compress(_finite_mean(flux_arr), 0.08)
 
-        rms_frames = librosa.feature.rms(S=S)[0]
+        rms_frames = librosa.feature.rms(S=S, frame_length=n_fft)[0]
         continuity = 1.0 - clamp01(float(np.std(np.diff(rms_frames))) / (float(np.mean(rms_frames)) + 1e-6))
 
         # Periodicity from onset autocorrelation plus pitch stability when available.

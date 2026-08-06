@@ -108,8 +108,26 @@ class PythonEnhancementClient {
   }
 
   syncFromHealth(health, httpBase, wsUrl) {
-    const http = (health?.http || httpBase || this.httpBase).replace(/\/$/, "");
-    const ws = health?.endpoints?.wsAudio || health?.ws || wsUrl || this.wsUrl;
+    // Prefer the base we successfully probed — never let a loopback health.http
+    // rewrite a working remote analysisBaseUrl (iPad / tunnel).
+    const probed = (httpBase || "").replace(/\/$/, "");
+    const claimed = (health?.http || "").replace(/\/$/, "");
+    const claimedLoop = /127\.0\.0\.1|localhost/i.test(claimed);
+    const probedLoop = /127\.0\.0\.1|localhost/i.test(probed);
+    let http = probed || this.httpBase;
+    if (claimed && (!claimedLoop || probedLoop)) {
+      http = claimed;
+    }
+    if (probed) http = probed;
+
+    let ws = health?.endpoints?.wsAudio || health?.ws || wsUrl || this.wsUrl;
+    if (window.PikoServiceEndpoints?.httpToWs) {
+      const derived = window.PikoServiceEndpoints.httpToWs(http);
+      const wsLoop = /127\.0\.0\.1|localhost/i.test(String(ws || ""));
+      const httpLoop = /127\.0\.0\.1|localhost/i.test(http);
+      if (derived && ((wsLoop && !httpLoop) || !ws)) ws = derived;
+    }
+
     let changed = false;
     if (http && http !== this.httpBase) {
       this.httpBase = http;
@@ -186,7 +204,15 @@ class PythonEnhancementClient {
     try {
       const form = new FormData();
       form.append("file", blob, filename);
-      const res = await fetch(`${this.httpBase}/analyze/wav`, { method: "POST", body: form });
+      // Qwen can take 30–90s; remote/iPad needs headroom.
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), 120000) : null;
+      const res = await fetch(`${this.httpBase}/analyze/wav`, {
+        method: "POST",
+        body: form,
+        signal: ctrl ? ctrl.signal : undefined
+      });
+      if (timer) clearTimeout(timer);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       this.lastResult = data;
