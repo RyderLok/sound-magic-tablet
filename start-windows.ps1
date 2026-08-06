@@ -6,7 +6,7 @@
   或双击 / Cursor Agent 自动调用
 #>
 param(
-  [string]$SerialPort = $(if ($env:SERIAL_PORT) { $env:SERIAL_PORT } else { "COM3" }),
+  [string]$SerialPort = $(if ($env:SERIAL_PORT) { $env:SERIAL_PORT } else { "auto" }),
   [int]$SerialBaud = 500000,
   [switch]$NoBrowser
 )
@@ -108,7 +108,7 @@ if (Test-TcpPort 8001) {
 
 Write-Host ""
 Write-Host "Open: http://localhost:8000" -ForegroundColor Cyan
-Write-Host "Bridge serial: $SerialPort @ $SerialBaud (set `$env:SERIAL_PORT to override)"
+Write-Host "Bridge serial: $SerialPort @ $SerialBaud (auto = USB plug-and-play; set `$env:SERIAL_PORT to pin a port)"
 Write-Host ""
 
 if (-not $NoBrowser) {

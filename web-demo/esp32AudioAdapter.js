@@ -115,7 +115,7 @@ class Esp32AudioAdapter {
       this.connected = true;
       console.log("[esp32] WebSocket connected:", this.url);
       this.updateLiveMonitor();
-      this.updateStatus("connected");
+      this.refreshConnectionStatus();
       if (this._liveMonitorTimer) clearInterval(this._liveMonitorTimer);
       this._liveMonitorTimer = setInterval(() => this.updateLiveMonitor(), 500);
     };
@@ -129,6 +129,7 @@ class Esp32AudioAdapter {
 
     this.ws.onclose = () => {
       this.connected = false;
+      this.serialOpen = false;
       this.updateStatus("disconnected");
       if (this._liveMonitorTimer) {
         clearInterval(this._liveMonitorTimer);
@@ -137,6 +138,20 @@ class Esp32AudioAdapter {
       this.updateLiveMonitor();
       this.scheduleReconnect();
     };
+  }
+
+  /** Collect Ready only when Bridge WS is up AND USB serial is open. */
+  refreshConnectionStatus() {
+    if (!this.isWsOpen()) {
+      this.updateStatus("disconnected");
+      return;
+    }
+    if (this.serialOpen === true) {
+      this.updateStatus("connected");
+    } else {
+      // Bridge online but recorder USB not plugged / not opened yet
+      this.updateStatus("disconnected");
+    }
   }
 
   scheduleReconnect() {
@@ -181,6 +196,8 @@ class Esp32AudioAdapter {
     }
     if (health?.pcm != null) this.pcmCapable = !!health.pcm;
     if (health?.sampleRate) this.sampleRate = health.sampleRate;
+    this.refreshConnectionStatus();
+    this.updateLiveMonitor();
   }
 
   isWsOpen() {
@@ -221,8 +238,9 @@ class Esp32AudioAdapter {
       this.pcmCapable = !!parsed.pcm;
       this.sampleRate = parsed.sampleRate || 16000;
       this.serialOpen = parsed.serialOpen != null ? !!parsed.serialOpen : this.serialOpen;
+      if (parsed.serialPort) this.serialPort = parsed.serialPort;
       this.lastMessageAt = Date.now();
-      this.updateStatus("connected");
+      this.refreshConnectionStatus();
       this.updateLiveMonitor();
       // Resync Keyes/UI if ESP32 is already recording when the page connects.
       if (parsed.recording === true && typeof this.onHardwareRecord === "function") {

@@ -13,10 +13,16 @@
   }
 
   async function listSounds() {
-    var res = await fetch(baseUrl() + '/sounds', { cache: 'no-store' });
-    if (!res.ok) throw new Error('GET /sounds failed: ' + res.status);
-    var data = await res.json();
-    return Array.isArray(data.sounds) ? data.sounds : [];
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, 8000);
+    try {
+      var res = await fetch(baseUrl() + '/sounds', { cache: 'no-store', signal: ctrl.signal });
+      if (!res.ok) throw new Error('GET /sounds failed: ' + res.status);
+      var data = await res.json();
+      return Array.isArray(data.sounds) ? data.sounds : [];
+    } finally {
+      clearTimeout(t);
+    }
   }
 
   async function getSound(id) {

@@ -346,6 +346,11 @@
       syncDone = true;
       return;
     }
+    var statusEl = el('transferStatus');
+    if (statusEl) {
+      stopDots();
+      statusEl.textContent = 'Syncing from Python backend…';
+    }
     syncPromise = client.syncIntoApp(app)
       .then(function (result) {
         if (window.PikoSoundsScreen && typeof window.PikoSoundsScreen.render === 'function') {
@@ -353,10 +358,18 @@
         }
         if (app.renderLibrary) app.renderLibrary();
         console.info('[transfer] synced sounds', result && result.total, 'imported', result && result.imported);
+        if (statusEl) {
+          var n = (result && result.imported) || 0;
+          statusEl.textContent = n > 0 ? ('Imported ' + n + ' sound(s)') : 'Sounds already synced';
+        }
       })
       .catch(function (err) {
         console.error('[transfer] sync failed', err);
         syncError = err;
+        if (statusEl) {
+          stopDots();
+          statusEl.textContent = 'Upload failed — start Python (:8001) and retry';
+        }
       })
       .finally(function () {
         syncDone = true;

@@ -2,11 +2,12 @@
 # Mac 一键启动（不覆盖 Windows .venv）
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-PORT="${SERIAL_PORT:-/dev/cu.usbserial-0001}"
+PORT="${SERIAL_PORT:-auto}"
 BAUD="${SERIAL_BAUD:-500000}"
 
 echo "Piko — Mac bootstrap"
 echo "Project: $ROOT"
+echo "Bridge serial: $PORT (auto = USB plug-and-play)"
 
 test_port() {
   lsof -i ":$1" -sTCP:LISTEN >/dev/null 2>&1

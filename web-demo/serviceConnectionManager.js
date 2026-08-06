@@ -64,6 +64,7 @@ class ServiceConnectionManager {
       this.app.esp32AudioAdapter?.ensureConnected?.();
       this.app.pythonClient?.ensureConnected?.();
 
+
       this.updateIntegrationUI(pyHealth, bridgeHealth);
       this.updatePipelineStatus(pyHealth, bridgeHealth);
     } catch (err) {

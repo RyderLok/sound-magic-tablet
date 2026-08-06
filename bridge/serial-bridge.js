@@ -2,7 +2,12 @@
 /**
  * ESP32 (INMP441) USB Serial → WebSocket bridge
  * Supports idle JSON/text metrics + binary PCM frames + record commands.
- * Usage: node serial-bridge.js --port COM3 [--baud 500000] [--ws 8765]
+ * Usage:
+ *   node serial-bridge.js --port auto [--baud 500000] [--ws 8765]
+ *   node serial-bridge.js --port COM3
+ *   node serial-bridge.js --port /dev/cu.usbserial-0001
+ *
+ * --port auto (default): poll USB serial devices and connect when plugged in.
  *
  * Binary PCM frame (little-endian):
  *   0xA5 0x5A 0x01 | seq u16 | sampleCount u16 | PCM16[sampleCount]
@@ -12,13 +17,16 @@ const { SerialPort } = require("serialport");
 const { WebSocketServer } = require("ws");
 const http = require("http");
 
+
 function readArg(name, fallback) {
   const idx = process.argv.indexOf(name);
   if (idx === -1 || !process.argv[idx + 1]) return fallback;
   return process.argv[idx + 1];
 }
 
-const SERIAL_PORT = readArg("--port", process.env.SERIAL_PORT || "COM3");
+const PORT_ARG = String(readArg("--port", process.env.SERIAL_PORT || "auto")).trim();
+const AUTO_PORT = !PORT_ARG || /^auto$/i.test(PORT_ARG);
+const PREFERRED_PORT = AUTO_PORT ? null : PORT_ARG;
 const BAUD_RATE = Number(readArg("--baud", process.env.SERIAL_BAUD || "500000"));
 const WS_PORT = Number(readArg("--ws", process.env.WS_PORT || "8765"));
 const HEALTH_PORT = Number(readArg("--health", process.env.BRIDGE_HEALTH_PORT || "8766"));
@@ -27,6 +35,10 @@ const PYTHON_SOUNDS_URL = (
 ).replace(/\/$/, "");
 const SAMPLE_RATE = 16000;
 const RECONNECT_MS = 2500;
+const PORT_SCAN_MS = 2000;
+
+/** Currently opened path (resolved dynamically when --port auto). */
+let activePort = PREFERRED_PORT;
 
 /** Frame header: A5 5A 01 */
 const PCM_MAGIC = Buffer.from([0xA5, 0x5A, 0x01]);
@@ -41,6 +53,7 @@ const PCM_IDLE_STOP_MS = 2500;
 
 let serial = null;
 let reconnectTimer = null;
+let openingSerial = false;
 /** Raw serial byte cache — never toString() the whole stream blindly. */
 let byteBuffer = Buffer.alloc(0);
 let textRemainder = "";
@@ -61,6 +74,7 @@ let sessionPcmChunks = [];
 let sessionStartedAt = 0;
 let sessionUploading = false;
 let lastUploadedSound = null;
+let lastWaitLogAt = 0;
 
 
 const wss = new WebSocketServer({ port: WS_PORT });
@@ -77,9 +91,10 @@ function bridgeHealthPayload() {
     wsListening: true,
     health: `http://127.0.0.1:${HEALTH_PORT}/health`,
     serial: {
-      port: SERIAL_PORT,
+      port: activePort || PREFERRED_PORT || "auto",
       baud: BAUD_RATE,
-      open: !!(serial && serial.isOpen)
+      open: !!(serial && serial.isOpen),
+      auto: AUTO_PORT
     },
     pcm: devicePcmCapable,
     sampleRate: SAMPLE_RATE,
@@ -119,7 +134,7 @@ wss.on("connection", (socket) => {
     pcm: devicePcmCapable,
     sampleRate: SAMPLE_RATE,
     serialOpen: !!(serial && serial.isOpen),
-    serialPort: SERIAL_PORT,
+    serialPort: activePort || PREFERRED_PORT || null,
     serialBaud: BAUD_RATE,
     recording: hardwareRecording,
     timestamp: Date.now()
@@ -197,6 +212,69 @@ function pcmChunksToWav(chunks, sampleRate) {
   return buffer;
 }
 
+/** POST multipart/form-data via Node http (more reliable than undici fetch in LaunchAgent). */
+function postMultipart(urlStr, fields, fileField) {
+  return new Promise((resolve, reject) => {
+    let url;
+    try {
+      url = new URL(urlStr);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const boundary = "----PikoBoundary" + Date.now().toString(16);
+    const chunks = [];
+    for (const [name, value] of Object.entries(fields)) {
+      chunks.push(
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`
+        )
+      );
+    }
+    chunks.push(
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${fileField.name}"; filename="${fileField.filename}"\r\nContent-Type: ${fileField.contentType}\r\n\r\n`
+      )
+    );
+    chunks.push(fileField.buffer);
+    chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    const body = Buffer.concat(chunks);
+
+    const req = http.request(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || 80,
+        path: url.pathname + url.search,
+        method: "POST",
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": body.length
+        },
+        timeout: 60000
+      },
+      (res) => {
+        const out = [];
+        res.on("data", (d) => out.push(d));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode || 0,
+            text: Buffer.concat(out).toString("utf8")
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("upload_timeout"));
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+
 async function finalizeAndUploadSession(source) {
   if (sessionUploading) return;
   const chunks = sessionPcmChunks;
@@ -205,13 +283,11 @@ async function finalizeAndUploadSession(source) {
   sessionStartedAt = 0;
 
   const pcmBytes = Buffer.concat(chunks.map((c) => Buffer.from(c)));
-  const durationMs = Math.max(
-    0,
-    Math.round(Date.now() - startedAt)
-  );
+  const durationMs = Math.max(0, Math.round(Date.now() - startedAt));
+
 
   if (pcmBytes.length < 640) {
-    console.warn("[session] PCM too short — skip upload");
+    console.log('[serial] session', "pcm_too_short", { pcmBytes: pcmBytes.length, source });
     sendTft("error");
     broadcast({
       type: "session",
@@ -244,31 +320,59 @@ async function finalizeAndUploadSession(source) {
     timestamp: Date.now()
   });
 
-  try {
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([wav], { type: "audio/wav" }),
-      `esp32_${Date.now()}.wav`
-    );
-    form.append("duration_ms", String(durationMs));
-    form.append("sample_rate", String(SAMPLE_RATE));
-    form.append("source", "esp32");
+  console.log('[serial] session', "upload_start", {
+    pcmBytes: pcmBytes.length,
+    durationMs,
+    url: PYTHON_SOUNDS_URL,
+    source
+  });
 
-    const res = await fetch(PYTHON_SOUNDS_URL, {
-      method: "POST",
-      body: form
-    });
-    const text = await res.text();
+  // Let the event loop breathe — serial metrics flood can starve HTTP otherwise.
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setTimeout(r, 50));
+
+  try {
+    let lastErr = null;
     let payload = null;
-    try {
-      payload = JSON.parse(text);
-    } catch (_) {
-      payload = null;
+    let resStatus = 0;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        // Direct upload (no health preflight — that was false-negative under serial load).
+        const res = await postMultipart(
+          PYTHON_SOUNDS_URL,
+          {
+            duration_ms: String(durationMs),
+            sample_rate: String(SAMPLE_RATE),
+            source: "esp32"
+          },
+          {
+            name: "file",
+            filename: `esp32_${Date.now()}.wav`,
+            contentType: "audio/wav",
+            buffer: wav
+          }
+        );
+        resStatus = res.status;
+        try {
+          payload = JSON.parse(res.text);
+        } catch (_) {
+          payload = null;
+        }
+        if (resStatus < 200 || resStatus >= 300) {
+          throw new Error(`upload ${resStatus}: ${String(res.text).slice(0, 180)}`);
+        }
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        console.log('[serial] session', "upload_retry", { attempt, err: String(err && err.message ? err.message : err) });
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+        }
+      }
     }
-    if (!res.ok) {
-      throw new Error(`upload ${res.status}: ${text.slice(0, 180)}`);
-    }
+    if (lastErr) throw lastErr;
+
     const sound = payload?.sound || payload;
     lastUploadedSound = {
       id: sound?.id || null,
@@ -276,6 +380,13 @@ async function finalizeAndUploadSession(source) {
       durationMs: sound?.duration_ms ?? durationMs,
       at: Date.now()
     };
+    console.log('[serial] session', "upload OK", {
+      status: resStatus,
+      soundId: lastUploadedSound.id,
+      name: lastUploadedSound.name,
+      pcmBytes: pcmBytes.length,
+      durationMs
+    });
     sendTft("done");
     broadcast({
       type: "session",
@@ -286,17 +397,24 @@ async function finalizeAndUploadSession(source) {
       source,
       timestamp: Date.now()
     });
-    console.log("[session] uploaded", lastUploadedSound.id, lastUploadedSound.name);
   } catch (err) {
-    console.error("[session] upload failed:", err.message || err);
+    console.log('[serial] session', "upload FAILED", {
+      err: String(err && err.message ? err.message : err),
+      url: PYTHON_SOUNDS_URL,
+      pcmBytes: pcmBytes.length
+    });
     sendTft("error");
     broadcast({
       type: "session",
       status: "error",
-      reason: String(err.message || err),
+      reason: String(err && err.message ? err.message : err),
       source,
       timestamp: Date.now()
     });
+    // Recover TFT so user is not stuck on Error
+    setTimeout(() => {
+      if (!hardwareRecording && !sessionUploading) sendTft("ready");
+    }, 2500);
   } finally {
     sessionUploading = false;
   }
@@ -564,6 +682,11 @@ function metricsFromPcm(pcmBuf) {
 /** Parse newline-delimited UTF-8 text that sits between binary frames. */
 function processTextChunk(buf) {
   if (!buf || buf.length === 0) return;
+  // While uploading, drop idle metrics — they starve the HTTP event loop.
+  if (sessionUploading) {
+    textRemainder = "";
+    return;
+  }
   textRemainder += buf.toString("utf8");
   const parts = textRemainder.split("\n");
   textRemainder = parts.pop() || "";
@@ -679,16 +802,79 @@ function processByteBuffer() {
   }
 }
 
-function formatSerialOpenError(err) {
+function formatSerialOpenError(err, portPath) {
+  const path = portPath || activePort || PREFERRED_PORT || "auto";
   const msg = err && err.message ? err.message : String(err);
   const busy = /access denied|cannot open|EACCES|EBUSY|Resource busy|Permission denied|in use|失败|占用/i.test(msg);
-  let out = `[serial] cannot open ${SERIAL_PORT} @ ${BAUD_RATE}: ${msg}`;
+  let out = `[serial] cannot open ${path} @ ${BAUD_RATE}: ${msg}`;
   if (busy) {
     out +=
       "\n[serial] Port is likely busy. Close Arduino Serial Monitor (串口监视器) " +
       "and any other app using this COM / cu.* port, then restart the bridge.";
   }
   return out;
+}
+
+function scoreSerialPath(portInfo) {
+  const path = String(portInfo.path || "");
+  const meta = `${path} ${portInfo.manufacturer || ""} ${portInfo.friendlyName || ""} ${portInfo.vendorId || ""}`.toLowerCase();
+  let score = 0;
+  if (/bluetooth|debug-console|incoming-port|cu\.bluetooth/i.test(path)) return -1000;
+  if (/usbserial|wchusbserial|wchusb|slab_usb|cu\.usbmodem|ttyusb|tty\.usb/i.test(path)) score += 50;
+  if (/^\/dev\/cu\./i.test(path)) score += 15; // prefer cu.* over tty.* on macOS
+  if (/^COM\d+$/i.test(path)) score += 40;
+  if (/silicon|wch|ch340|cp210|ftdi|espressif|usb.?serial|uart/i.test(meta)) score += 20;
+  if (/usb/i.test(meta)) score += 5;
+  return score;
+}
+
+async function listCandidatePorts() {
+  const ports = await SerialPort.list();
+  return ports
+    .map((p) => ({ path: p.path, score: scoreSerialPath(p), info: p }))
+    .filter((p) => p.score > 0 && p.path)
+    .sort((a, b) => b.score - a.score || String(a.path).localeCompare(String(b.path)));
+}
+
+function preferCuPath(path) {
+  // macOS: serialport often lists tty.*; cu.* is safer for apps (no carrier wait).
+  if (!path || !/^\/dev\/tty\./i.test(path)) return path;
+  const cu = path.replace(/^\/dev\/tty\./i, "/dev/cu.");
+  try {
+    if (require("fs").existsSync(cu)) return cu;
+  } catch (_) { /* ignore */ }
+  return path;
+}
+
+async function resolvePortPath() {
+  const candidates = await listCandidatePorts();
+  if (PREFERRED_PORT) {
+    const hit = candidates.find((c) => c.path === PREFERRED_PORT);
+    if (hit) return preferCuPath(hit.path);
+    // Preferred missing: if user locked a specific port, keep trying it;
+    // if auto mode wasn't set but port gone, fall through to best USB device.
+    if (!AUTO_PORT) {
+      console.warn(`[serial] preferred ${PREFERRED_PORT} not listed — will keep retrying`);
+      return preferCuPath(PREFERRED_PORT);
+    }
+    console.warn(`[serial] preferred ${PREFERRED_PORT} missing — using auto scan`);
+  }
+  if (candidates.length) return preferCuPath(candidates[0].path);
+  return null;
+}
+
+function broadcastSerialWaiting(pathHint) {
+  broadcast({
+    type: "bridge",
+    status: "serial_waiting",
+    pcm: devicePcmCapable,
+    sampleRate: SAMPLE_RATE,
+    serialOpen: false,
+    serialPort: pathHint || activePort || null,
+    serialBaud: BAUD_RATE,
+    recording: hardwareRecording,
+    timestamp: Date.now()
+  });
 }
 
 function attachSerialHandlers() {
@@ -699,9 +885,10 @@ function attachSerialHandlers() {
   });
 
   serial.on("open", () => {
-    console.log(`[serial] open ${SERIAL_PORT} @ ${BAUD_RATE}`);
+    console.log(`[serial] open ${activePort} @ ${BAUD_RATE}`);
     byteBuffer = Buffer.alloc(0);
     textRemainder = "";
+    openingSerial = false;
     sendTft("ready");
     broadcast({
       type: "bridge",
@@ -709,7 +896,7 @@ function attachSerialHandlers() {
       pcm: devicePcmCapable,
       sampleRate: SAMPLE_RATE,
       serialOpen: true,
-      serialPort: SERIAL_PORT,
+      serialPort: activePort,
       serialBaud: BAUD_RATE,
       recording: hardwareRecording,
       timestamp: Date.now()
@@ -717,49 +904,78 @@ function attachSerialHandlers() {
   });
 
   serial.on("error", (err) => {
-    console.error(formatSerialOpenError(err));
+    console.error(formatSerialOpenError(err, activePort));
+    openingSerial = false;
   });
 
   serial.on("close", () => {
-    console.warn("[serial] closed — reconnecting…");
+    console.warn("[serial] closed — waiting for USB / reconnecting…");
+    openingSerial = false;
+    broadcastSerialWaiting(activePort);
     scheduleReconnect();
   });
 }
 
-function openSerial() {
+async function openSerial() {
   if (serial && serial.isOpen) return;
+  if (openingSerial) return;
+  openingSerial = true;
 
   try {
+    const path = await resolvePortPath();
+    if (!path) {
+      openingSerial = false;
+      const now = Date.now();
+      if (now - lastWaitLogAt > 5000) {
+        lastWaitLogAt = now;
+        console.log("[serial] waiting for USB recorder (plug ESP32)…");
+      }
+      broadcastSerialWaiting(null);
+      scheduleReconnect(PORT_SCAN_MS);
+      return;
+    }
+
+    activePort = path;
+    console.log(`[serial] connecting ${activePort} @ ${BAUD_RATE}${AUTO_PORT ? " (auto)" : ""}`);
+
+    if (serial) {
+      try {
+        serial.removeAllListeners();
+        if (serial.isOpen) {
+          await new Promise((resolve) => serial.close(() => resolve()));
+        }
+      } catch (_) { /* ignore */ }
+      serial = null;
+    }
+
     serial = new SerialPort({
-      path: SERIAL_PORT,
+      path: activePort,
       baudRate: BAUD_RATE,
       autoOpen: true
     });
     attachSerialHandlers();
   } catch (err) {
-    console.error(formatSerialOpenError(err));
+    openingSerial = false;
+    console.error(formatSerialOpenError(err, activePort));
     scheduleReconnect();
   }
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(delayMs) {
   if (reconnectTimer) return;
+  const wait = delayMs != null ? delayMs : RECONNECT_MS;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    try {
-      if (serial) {
-        serial.removeAllListeners();
-        serial.close(() => openSerial());
-      } else {
-        openSerial();
-      }
-    } catch (err) {
-      console.error("[serial] reconnect failed:", err.message);
+    openSerial().catch((err) => {
+      console.error("[serial] reconnect failed:", err.message || err);
       scheduleReconnect();
-    }
-  }, RECONNECT_MS);
+    });
+  }, wait);
 }
 
+console.log(
+  `[bridge] serial mode: ${AUTO_PORT ? "auto-detect USB" : `fixed ${PREFERRED_PORT}`} @ ${BAUD_RATE}`
+);
 openSerial();
 
 process.on("SIGINT", () => {
