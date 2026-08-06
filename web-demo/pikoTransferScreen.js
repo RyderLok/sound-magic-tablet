@@ -14,6 +14,7 @@
   var raf = null;
   var progress = 0;
   var finishHoldTimer = null;
+  var completedOnce = false;
   var queue = [];
   var currentIndex = -1;
   var t0 = 0;
@@ -281,21 +282,28 @@
   }
 
   function complete() {
-    if (paused || aborted) return;
+    if (paused || aborted || completedOnce) return;
+    completedOnce = true;
     setProgress(1);
     stopDots();
     running = false;
+    if (raf != null) {
+      cancelAnimationFrame(raf);
+      raf = null;
+    }
     var status = el('transferStatus');
     if (status && syncError) {
-      // keep dots span structure if present
       var live = el('transferStatusDots');
       if (live) live.textContent = '';
+    }
+    if (finishHoldTimer != null) {
+      clearTimeout(finishHoldTimer);
+      finishHoldTimer = null;
     }
     finishHoldTimer = setTimeout(function () {
       finishHoldTimer = null;
       if (!aborted && !paused) {
         if (syncError) {
-          // Stay / go back — do not fake success into My Sounds
           if (window.PikoRouter) window.PikoRouter.show('collect');
         } else {
           goSounds();
@@ -336,6 +344,33 @@
     raf = requestAnimationFrame(tick);
   }
 
+  /**
+   * Sync may finish while rAF is throttled (background / embedded preview).
+   * Don't rely on tick alone — force progress + finish on a timer.
+   */
+  function onSyncSettled() {
+    syncDone = true;
+    if (aborted || paused) return;
+    if (!running) return;
+    // Jump out of the stuck 0% state immediately.
+    if (progress < 0.92) {
+      setProgress(0.92);
+      syncActiveSound(0.92);
+      tickWave(performance.now());
+    }
+    // Short bloom, then FINISH → My Sounds (even if rAF never fires again).
+    if (finishHoldTimer != null) clearTimeout(finishHoldTimer);
+    finishHoldTimer = setTimeout(function () {
+      finishHoldTimer = null;
+      if (aborted || paused) return;
+      if (!running && progress >= 1) return;
+      setProgress(1);
+      syncActiveSound(1);
+      tickWave(performance.now());
+      complete();
+    }, 700);
+  }
+
   function beginBackendSync() {
     syncDone = false;
     syncError = null;
@@ -343,7 +378,7 @@
     var app = window.App;
     if (!client || typeof client.syncIntoApp !== 'function' || !app) {
       syncError = new Error('Sounds API unavailable');
-      syncDone = true;
+      onSyncSettled();
       return;
     }
     if (typeof client.beginTransferSession === 'function') {
@@ -352,7 +387,21 @@
     var statusEl = el('transferStatus');
     if (statusEl) {
       stopDots();
-      statusEl.textContent = 'Syncing from Python backend…';
+      statusEl.textContent = 'Syncing your sounds';
+      var dots = document.createElement('span');
+      dots.className = 'transfer-status-dots';
+      var ghost = document.createElement('span');
+      ghost.className = 'transfer-status-dots-ghost';
+      ghost.textContent = '…';
+      var live = document.createElement('span');
+      live.id = 'transferStatusDots';
+      live.className = 'transfer-status-dots-live';
+      live.setAttribute('aria-hidden', 'true');
+      live.textContent = '...';
+      dots.appendChild(ghost);
+      dots.appendChild(live);
+      statusEl.appendChild(dots);
+      startDots();
     }
     syncPromise = client.syncIntoApp(app)
       .then(function (result) {
@@ -366,7 +415,20 @@
         console.info('[transfer] synced sounds', result && result.total, 'imported', result && result.imported);
         if (statusEl) {
           var n = (result && result.imported) || 0;
-          statusEl.textContent = n > 0 ? ('Imported ' + n + ' sound(s)') : 'Sounds already synced';
+          var total = (result && result.total) || 0;
+          var batchLen = 0;
+          try {
+            batchLen = (client.loadLatestBatch && client.loadLatestBatch()) || [];
+            batchLen = batchLen.length || 0;
+          } catch (e) { batchLen = 0; }
+          stopDots();
+          if (n > 0) {
+            statusEl.textContent = 'Imported ' + n + ' sound' + (n === 1 ? '' : 's');
+          } else if (batchLen > 0 || total > 0) {
+            statusEl.textContent = 'All set — opening your sounds';
+          } else {
+            statusEl.textContent = 'No new sounds yet';
+          }
         }
       })
       .catch(function (err) {
@@ -378,7 +440,7 @@
         }
       })
       .finally(function () {
-        syncDone = true;
+        onSyncSettled();
       });
   }
 
@@ -387,6 +449,7 @@
     aborted = false;
     paused = false;
     running = true;
+    completedOnce = false;
     currentIndex = -1;
     activeWaveData = null;
     wavePauseAccum = 0;

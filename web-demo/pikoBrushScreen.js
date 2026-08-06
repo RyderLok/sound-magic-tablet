@@ -208,10 +208,12 @@
     var canvas = panel.querySelector('canvas');
     if (!canvas) {
       canvas = document.createElement('canvas');
-      canvas.width = 596;
-      canvas.height = 336;
       panel.innerHTML = '';
       panel.appendChild(canvas);
+    }
+    if (canvas.width !== 596 || canvas.height !== 323) {
+      canvas.width = 596;
+      canvas.height = 323;
     }
     preview.canvas = canvas;
 
@@ -300,7 +302,7 @@
       if (!canvas) {
         canvas = document.createElement('canvas');
         canvas.width = 596;
-        canvas.height = 336;
+        canvas.height = 323;
         panel.innerHTML = '';
         panel.appendChild(canvas);
       }
@@ -312,6 +314,57 @@
     startLivePreview(sample);
   }
 
+  function heardCopy(sample) {
+    if (!sample) return null;
+    var sem = sample.pythonSemantic || null;
+    var err = sample.pythonSemanticError || null;
+    var arch = window.NaturalSoundArchetypes;
+    var archetypeId = (sem && sem.archetype)
+      || (sample.pythonAnalysis && sample.pythonAnalysis.category)
+      || (sample.visualParams && sample.visualParams.archetypeId)
+      || null;
+    var pattern = (sample.visualParams && sample.visualParams.strokePattern)
+      || (sample.pythonAnalysis && sample.pythonAnalysis.strokePattern)
+      || null;
+
+    if (sem && archetypeId) {
+      var heard = (arch && arch.labels && arch.labels[archetypeId] && arch.labels[archetypeId].en)
+        || sem.soundLabel
+        || archetypeId;
+      var stroke = (arch && arch.patternLabels && pattern && arch.patternLabels[pattern] && arch.patternLabels[pattern].en)
+        || null;
+      var line = stroke ? ('Heard as ' + heard + ' · ' + stroke) : ('Heard as ' + heard);
+      var tip = sem.description || '';
+      return { text: line, tip: tip, state: 'heard' };
+    }
+
+    if (err || sample.status === 'analyzed') {
+      return {
+        text: "Couldn't quite hear this one",
+        tip: (err && (err.message || err.code)) || '',
+        state: 'missed'
+      };
+    }
+
+    return null;
+  }
+
+  function updateHeardHint(sample) {
+    var node = el('brushHeardHint');
+    if (!node) return;
+    var copy = heardCopy(sample);
+    node.classList.remove('is-visible', 'is-heard', 'is-missed');
+    if (!copy) {
+      node.textContent = '';
+      node.removeAttribute('title');
+      return;
+    }
+    node.textContent = copy.text;
+    if (copy.tip) node.setAttribute('title', copy.tip);
+    else node.removeAttribute('title');
+    node.classList.add('is-visible', copy.state === 'heard' ? 'is-heard' : 'is-missed');
+  }
+
   function updateInfo(sample) {
     var nameEl = el('brushInfoName');
     var durEl = el('brushInfoDur');
@@ -319,11 +372,17 @@
     if (nameEl) nameEl.textContent = sample ? sampleName(sample) : '—';
     if (durEl) durEl.textContent = sample ? formatDuration(sample.duration) : '00:00';
     if (wave) drawWave(wave, sample);
+    updateHeardHint(sample);
     drawPreview(sample);
   }
 
   function updatePaletteCount() {
-    var n = window.PlateManager ? window.PlateManager.count() : 0;
+    var a = app();
+    var n = window.PlateManager
+      ? (typeof window.PlateManager.liveCount === 'function'
+          ? window.PlateManager.liveCount(a)
+          : window.PlateManager.count())
+      : 0;
     var max = window.PlateManager ? window.PlateManager.MAX_BRUSHES : 5;
     var node = el('brushPaletteCount');
     if (node) node.textContent = 'Add to palette: ' + n + '/' + max;

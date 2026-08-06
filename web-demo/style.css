@@ -1568,13 +1568,47 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* Soft listen-result line — proves Transform heard the sound (no tech jargon) */
+.brush-heard-hint {
+  position: absolute;
+  left: 417px;
+  top: 258px;
+  width: 596px;
+  margin: 0;
+  color: var(--piko-muted-2);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 280ms ease, transform 280ms ease, color 200ms ease;
+  pointer-events: none;
+}
+
+.brush-heard-hint.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.brush-heard-hint.is-heard {
+  color: var(--piko-orange);
+}
+
+.brush-heard-hint.is-missed {
+  color: var(--piko-muted-2);
+}
+
 /* 预览板 · 实时笔刷动态展示 */
 .brush-preview-panel {
   position: absolute;
   left: 417px;
-  top: 273px;
+  top: 286px;
   width: 596px;
-  height: 336px;
+  height: 323px;
   border-radius: var(--piko-radius-card);
   background: var(--piko-cream);
   overflow: hidden;

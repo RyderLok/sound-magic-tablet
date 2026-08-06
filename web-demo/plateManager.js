@@ -31,6 +31,34 @@ const PlateManager = {
     return this.selectedIds.length;
   },
 
+  /** Drop plate ids that no longer exist in the library (stale localStorage). */
+  prune(app) {
+    if (!app?.soundLibrary) {
+      if (this.selectedIds.length) {
+        this.selectedIds = [];
+        this.activeBrushId = null;
+        this.save();
+      }
+      return this.selectedIds;
+    }
+    const alive = new Set(app.soundLibrary.map((s) => s && s.id).filter(Boolean));
+    const next = this.selectedIds.filter((id) => alive.has(id));
+    if (next.length !== this.selectedIds.length) {
+      this.selectedIds = next;
+      if (this.activeBrushId && !alive.has(this.activeBrushId)) {
+        this.activeBrushId = this.selectedIds[0] || null;
+      }
+      this.save();
+    }
+    return this.selectedIds;
+  },
+
+  /** Live palette size — never count orphaned ids. */
+  liveCount(app) {
+    this.prune(app);
+    return this.getSelectedSamples(app).length;
+  },
+
   getSelectedSamples(app) {
     if (!app?.soundLibrary) return [];
     return this.selectedIds

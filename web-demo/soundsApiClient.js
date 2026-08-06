@@ -189,12 +189,40 @@
   }
 
   /**
-   * Transfer 同步结束：New Sounds = 本次新导入的 id；
-   * 若本次没有新导入则为空（不按时间簇猜）。
+   * Transfer 同步结束：New Sounds = 本次新导入；
+   * 若已在库里（硬件上传时已 sync），回填后端最近录音，避免空列表。
    */
   function commitTransferBatch(app, syncResult) {
     var ids = (syncResult && syncResult.importedIds) || [];
-    return setLatestBatch(ids);
+    if (ids.length) return setLatestBatch(ids);
+
+    var rows = (syncResult && syncResult.sounds) || [];
+    var lib = (app && app.soundLibrary) || [];
+    if (!rows.length || !lib.length) return setLatestBatch([]);
+
+    var byBackend = Object.create(null);
+    lib.forEach(function (s) {
+      if (s && s.backendId) byBackend[s.backendId] = s.id;
+    });
+
+    var sorted = rows.slice().sort(function (a, b) {
+      return Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0);
+    });
+
+    var picked = [];
+    for (var i = 0; i < sorted.length && picked.length < 8; i++) {
+      var row = sorted[i];
+      if (!row || !row.id) continue;
+      var localId = byBackend[row.id];
+      if (localId) picked.push(localId);
+    }
+    return setLatestBatch(picked);
+  }
+
+  /** 硬件上传后：把本次新导入追加进 New Sounds（不整批覆盖） */
+  function appendLatestBatch(ids) {
+    if (!ids || !ids.length) return loadLatestBatch();
+    return setLatestBatch(loadLatestBatch().concat(ids));
   }
 
   function sampleInBatch(sample, batchSet) {
@@ -248,6 +276,7 @@
     setLatestBatch: setLatestBatch,
     beginTransferSession: beginTransferSession,
     commitTransferBatch: commitTransferBatch,
+    appendLatestBatch: appendLatestBatch,
     listLatestSamples: listLatestSamples,
     listHistorySamples: listHistorySamples,
     forgetFromLatestBatch: forgetFromLatestBatch

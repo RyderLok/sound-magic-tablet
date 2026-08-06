@@ -91,6 +91,9 @@ const App = {
     const stored = await SampleLibraryStore.loadAll();
     if (stored.length) {
       this.soundLibrary = stored;
+      if (typeof PlateManager !== "undefined" && typeof PlateManager.prune === "function") {
+        PlateManager.prune(this);
+      }
       this.renderLibrary();
       this.renderPlatePanel();
     }

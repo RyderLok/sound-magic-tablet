@@ -90,9 +90,23 @@ class FieldRecorder {
       if (!evt || evt.status !== "uploaded" || !evt.soundId) return;
       const client = window.SoundsApiClient;
       if (!client || !this.app) return;
-      client.syncIntoApp(this.app).catch((err) => {
-        console.warn("[record] post-upload sync failed:", err);
-      });
+      client.syncIntoApp(this.app)
+        .then((result) => {
+          if (result && result.importedIds && result.importedIds.length) {
+            if (typeof client.appendLatestBatch === "function") {
+              client.appendLatestBatch(result.importedIds);
+            } else if (typeof client.commitTransferBatch === "function") {
+              client.commitTransferBatch(this.app, result);
+            }
+          }
+          if (window.PikoSoundsScreen && typeof window.PikoSoundsScreen.render === "function") {
+            window.PikoSoundsScreen.render();
+          }
+          if (typeof this.app.renderLibrary === "function") this.app.renderLibrary();
+        })
+        .catch((err) => {
+          console.warn("[record] post-upload sync failed:", err);
+        });
     };
   }
 

@@ -54,7 +54,7 @@
 
     var list = samples();
     if (!list.length) {
-      track.innerHTML = '<p class="sounds-empty">还没有新录音 — 先去 Input 上传</p>';
+      track.innerHTML = '<p class="sounds-empty">No new sounds yet — go to Input first</p>';
       updateFooter();
       return;
     }
