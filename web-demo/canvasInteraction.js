@@ -20,6 +20,9 @@ class CanvasInteraction {
     this.canvasTool = "draw";
     this._strokeActive = false;
     this.lastMouse = { x: 0, y: 0 };
+    this._pointerWasDown = false;
+    /** Latest pointer in client/window coords — used to beat p5 mouse under CSS transforms. */
+    this._drawPointer = null;
     this._pressStartedOnUi = false;
     this._pointerOverUi = false;
     // Figma 1:298 白纸默认：Rectangle 136 @ (87,157) 880×623 rx30
@@ -51,17 +54,60 @@ class CanvasInteraction {
       !!(node && node.closest && node.closest(".piko-canvas-chrome, .piko-ui-layer"));
 
     document.addEventListener("pointerdown", (e) => {
+      this._drawPointer = { x: e.clientX, y: e.clientY };
       this._pressStartedOnUi = isUi(e.target);
       this._pointerOverUi = this._pressStartedOnUi;
     }, true);
 
     document.addEventListener("pointermove", (e) => {
+      this._drawPointer = { x: e.clientX, y: e.clientY };
       this._pointerOverUi = isUi(e.target);
     }, true);
 
-    const release = () => { this._pressStartedOnUi = false; };
+    const release = (e) => {
+      this._pressStartedOnUi = false;
+      // Commit on pointerup too — Apple Pencil / WKWebView may skip p5 mouseReleased.
+      if (e && (e.type === "pointerup" || e.type === "pointercancel")) {
+        if (this._strokeActive && this.canvasTool === "draw") {
+          this.commitStroke();
+        }
+        this._pointerWasDown = false;
+      }
+    };
     document.addEventListener("pointerup", release, true);
     document.addEventListener("pointercancel", release, true);
+  }
+
+  /**
+   * Map browser client coords → p5 canvas pixels.
+   * Required because #pikoStage (and optional paper zoom) use CSS transform scale;
+   * p5 mouseX/mouseY ignore ancestor transforms and drift under the pen on iPad.
+   */
+  _clientToCanvas(clientX, clientY) {
+    const canvas =
+      (typeof drawingContext !== "undefined" && drawingContext?.canvas) ||
+      document.querySelector("#canvasHolder canvas");
+    if (!canvas || !(width > 0) || !(height > 0)) {
+      return { x: mouseX, y: mouseY };
+    }
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) {
+      return { x: mouseX, y: mouseY };
+    }
+    return {
+      x: ((clientX - rect.left) / rect.width) * width,
+      y: ((clientY - rect.top) / rect.height) * height
+    };
+  }
+
+  _currentDrawPoint() {
+    if (this._drawPointer) {
+      return this._clientToCanvas(this._drawPointer.x, this._drawPointer.y);
+    }
+    if (typeof winMouseX === "number" && typeof winMouseY === "number") {
+      return this._clientToCanvas(winMouseX, winMouseY);
+    }
+    return { x: mouseX, y: mouseY };
   }
 
   /** 指针压在 UI 上、或拖到 UI 上方时不落笔 */
@@ -196,6 +242,7 @@ class CanvasInteraction {
   _beginNav() {
     if (this._strokeActive) this.commitStroke();
     this._navActive = true;
+    this._pointerWasDown = false;
   }
 
   _clientToStage(clientX, clientY) {
@@ -417,6 +464,7 @@ class CanvasInteraction {
     if (!this.brushGenerator || !this.artLayer || !this.persistentLayer) return;
     this.brushGenerator.commitLiveTo(this.persistentLayer, this.artLayer);
     this._strokeActive = false;
+    this._pointerWasDown = false;
   }
 
   _centerClipRect(l) {
@@ -530,26 +578,40 @@ class CanvasInteraction {
       this.drawZoneHints(l);
     }
 
-    if (mouseIsPressed && this.isMouseInside() && !this.isPointerOnUi() && !this.isNavigating()) {
-      const inCenter = this._isInCenterZone(l, mouseX, mouseY);
+    const pt = this._currentDrawPoint();
+    const canDraw =
+      mouseIsPressed &&
+      this.isMouseInsidePoint(pt) &&
+      !this.isPointerOnUi() &&
+      !this.isNavigating();
+
+    if (canDraw) {
+      const inCenter = this._isInCenterZone(l, pt.x, pt.y);
       if (inCenter) {
+        // First sample of a press: seed lastMouse to current so we don't
+        // rubber-band a line from the previous stroke (or from 0,0).
+        if (!this._pointerWasDown) {
+          this.lastMouse = { x: pt.x, y: pt.y };
+        }
         if (this.canvasTool === "erase") {
           this.brushGenerator.addEraseStroke(
-            mouseX, mouseY,
+            pt.x, pt.y,
             this.lastMouse.x, this.lastMouse.y
           );
         } else {
           this._strokeActive = true;
           this.brushGenerator.addStroke(
-            mouseX, mouseY,
+            pt.x, pt.y,
             this.lastMouse.x, this.lastMouse.y,
             visualParameters
           );
         }
       }
     }
+    this._pointerWasDown = !!canDraw;
+
     if (!this.isNavigating()) {
-      this.lastMouse = { x: mouseX, y: mouseY };
+      this.lastMouse = { x: pt.x, y: pt.y };
     }
 
     this.brushGenerator.updateAudioFeatures(visualParameters, personalityVector, aiResult);
@@ -699,7 +761,12 @@ class CanvasInteraction {
   }
 
   isMouseInside() {
-    return mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height;
+    return this.isMouseInsidePoint(this._currentDrawPoint());
+  }
+
+  isMouseInsidePoint(pt) {
+    if (!pt) return false;
+    return pt.x >= 0 && pt.x <= width && pt.y >= 0 && pt.y <= height;
   }
 
   /**

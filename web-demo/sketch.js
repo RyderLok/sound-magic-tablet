@@ -59,6 +59,13 @@ function mouseReleased() {
   if (canvasInteraction._strokeActive) {
     canvasInteraction.commitStroke();
   }
+  canvasInteraction._pointerWasDown = false;
+}
+
+function touchEnded() {
+  // iPad / Apple Pencil: ensure stroke commits when touch ends.
+  mouseReleased();
+  return false;
 }
 
 function keyPressed() {
