@@ -1072,7 +1072,7 @@ button {
   color: var(--piko-white);
 }
 
-/* 视觉预览区（卡上半部） */
+/* 视觉预览区（卡上半部）— 底色作 fallback；真色由 SoundColorEngine 画上 canvas */
 .sound-preview {
   position: absolute;
   left: 12px;
@@ -1080,7 +1080,7 @@ button {
   width: 195px;
   height: 140px;
   border-radius: 18px;
-  background: var(--piko-white);
+  background: linear-gradient(128deg, #fe2e3e 2%, #f6832a 98%);
   overflow: hidden;
 }
 

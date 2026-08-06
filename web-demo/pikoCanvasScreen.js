@@ -185,9 +185,15 @@
 
     var pill = el('pikoPalettePill');
     if (pill) {
-      pill.addEventListener('click', function (event) {
+      var lastSwitchAt = 0;
+      var switchBrush = function (event) {
         var slot = event.target.closest('[data-brush-id]');
         if (!slot) return;
+        // Don't preventDefault — that cancels the click synthesis some WebViews need.
+        event.stopPropagation();
+        var now = Date.now();
+        if (now - lastSwitchAt < 320) return;
+        lastSwitchAt = now;
         var id = slot.dataset.brushId;
         var a = app();
         if (window.PlateManager) window.PlateManager.setActiveBrush(id);
@@ -196,7 +202,9 @@
         }
         if (a && typeof a.renderBrushStrip === 'function') a.renderBrushStrip();
         renderPalette();
-      });
+      };
+      pill.addEventListener('pointerup', switchBrush);
+      pill.addEventListener('click', switchBrush);
     }
 
     // analysis 一律走 Figma 画板顶栏，不再回退旧后端 UI

@@ -16,12 +16,19 @@ const VisualPipeline = {
     const locked = window.activeVisualParams || {};
     let visualParams = { ...(baseParams || {}) };
     const pythonMods = (py && py.lastModifiers) ? py.lastModifiers : null;
+    // Paint plate: each slot is its own sound-brush. Never re-apply the last
+    // Transform session's python brush/mods — that made every slot look the same.
+    const plateMode = !!window.App?.plateMode;
 
-    if (pythonMods && Object.keys(pythonMods).length) {
+    if (!plateMode && pythonMods && Object.keys(pythonMods).length) {
       visualParams = VisualParamFusion.mergeAndClamp(visualParams, pythonMods);
     }
 
-    if (py && py.lastBrush) {
+    if (plateMode) {
+      if (window.activeBrushParams) {
+        visualParams = BrushSchema.applyToVisualParams(visualParams, window.activeBrushParams);
+      }
+    } else if (py && py.lastBrush) {
       visualParams = BrushSchema.applyToVisualParams(visualParams, py.lastBrush);
     } else {
       const brush = BrushSchema.fromVisualAndModifiers(visualParams, pythonMods, liveFeatures);
@@ -31,9 +38,12 @@ const VisualPipeline = {
 
     // Never drop per-recording palette / stroke pattern set by analysis.
     if (locked.palette?.length) {
-      visualParams.palette = typeof SoundColorEngine !== "undefined"
-        ? SoundColorEngine.modulatePalette(locked.palette, liveFeatures, 0.14)
-        : locked.palette;
+      if (plateMode || typeof SoundColorEngine === "undefined") {
+        // Keep this brush's spectrum palette exact (multi-color, no live wash).
+        visualParams.palette = locked.palette.map((c) => ({ r: c.r, g: c.g, b: c.b }));
+      } else {
+        visualParams.palette = SoundColorEngine.modulatePalette(locked.palette, liveFeatures, 0.14);
+      }
     } else if (liveFeatures && typeof SoundColorEngine !== "undefined" && (liveFeatures.bass != null || liveFeatures.volume)) {
       visualParams.palette = SoundColorEngine.buildFromFeatures(liveFeatures, locked.archetypeId || null);
     }

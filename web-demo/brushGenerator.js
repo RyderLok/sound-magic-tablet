@@ -753,8 +753,9 @@ class BrushGenerator {
   }
 
   particleColor(palette, particle, fallbackInk) {
-    if (!palette.length) return fallbackInk;
-    // Spread seeds across full palette — avoid clustering on first warm swatch.
+    if (!palette?.length) return fallbackInk || { r: 120, g: 115, b: 110 };
+    // One brush = one spectrum palette → particles pick across THAT palette (缤纷).
+    // Other plate brushes are not merged in, so switching slots changes the family.
     const af = window.activeAcousticFeatures || {};
     const spread =
       (this.smoothed.centroid || 0) * 1.2
@@ -762,29 +763,39 @@ class BrushGenerator {
       + (af.spectralCentroid || 0) * 1.4
       + (af.trebleRatio || 0) * 1.1
       + (particle.orbit || 0) * 2.2;
-    const idx = Math.floor(Math.abs(particle.colorSeed * 1.7 + spread * 3.1)) % palette.length;
-    const base = palette[idx];
+    const idx = Math.floor(Math.abs((particle.colorSeed || 0) * 1.7 + spread * 3.1)) % palette.length;
+    const base = palette[idx] || fallbackInk || palette[0];
     if (typeof SoundColorEngine === "undefined") return base;
-    // Light modulate — heavy warm push was washing cool hues into gold mud.
     return SoundColorEngine.liveModulate(base, {
       bass: this.smoothed.low,
       mid: this.smoothed.mid,
       treble: this.smoothed.high,
       volume: this.smoothed.volume
-    }, 0.12);
+    }, 0.1);
   }
 
   resolveInkColor(visualParameters) {
     const vp = visualParameters || {};
     const palette = this.resolvePalette(vp);
+    const brushId = vp._activeBrushId || window.PlateManager?.activeBrushId || null;
+    if (brushId && brushId !== this._inkBrushId) {
+      this._inkBrushId = brushId;
+      if (palette[0]) this.resetInkColor(palette[0]);
+    }
+
     let target = { r: 140, g: 120, b: 180 };
     if (palette.length) {
+      // Spectrum energy walks within this brush's own colors (not a flat swatch).
       const idx = this.inkIndexFromAudio(palette.length);
-      target = { ...palette[idx] };
+      target = { r: palette[idx].r, g: palette[idx].g, b: palette[idx].b };
     }
-    this.smoothedInk.r = lerp(this.smoothedInk.r, target.r, 0.22);
-    this.smoothedInk.g = lerp(this.smoothedInk.g, target.g, 0.22);
-    this.smoothedInk.b = lerp(this.smoothedInk.b, target.b, 0.22);
+    const dr = Math.abs(this.smoothedInk.r - target.r);
+    const dg = Math.abs(this.smoothedInk.g - target.g);
+    const db = Math.abs(this.smoothedInk.b - target.b);
+    const t = (dr + dg + db > 48) ? 0.75 : 0.28;
+    this.smoothedInk.r = lerp(this.smoothedInk.r, target.r, t);
+    this.smoothedInk.g = lerp(this.smoothedInk.g, target.g, t);
+    this.smoothedInk.b = lerp(this.smoothedInk.b, target.b, t);
     return this.smoothedInk;
   }
 

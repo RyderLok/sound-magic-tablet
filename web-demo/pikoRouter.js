@@ -63,6 +63,12 @@
 
     finishPending();
 
+    // Back to Collect = end the live New Sounds window (history stays in My sounds).
+    if (name === 'collect' && window.SoundsApiClient &&
+        typeof window.SoundsApiClient.clearNewSoundsSession === 'function') {
+      window.SoundsApiClient.clearNewSoundsSession();
+    }
+
     var mode = (options && options.mode) || direction(prev, name);
     var leaving = prev ? el(screens[prev]) : null;
     var entering = el(screens[name]);

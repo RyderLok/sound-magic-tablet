@@ -168,6 +168,8 @@ const App = {
     const sample = this.soundLibrary.find((s) => s.id === sampleId);
     if (!sample) return;
 
+    PlateManager.prune(this);
+
     if (PlateManager.isSelected(sampleId)) {
       PlateManager.toggle(this, sampleId);
       this.renderPlatePanel();
@@ -175,8 +177,11 @@ const App = {
       return;
     }
 
-    if (PlateManager.count() >= PlateManager.MAX_BRUSHES) {
-      alert(`画板最多选择 ${PlateManager.MAX_BRUSHES} 段录音。`);
+    const used = typeof PlateManager.liveCount === "function"
+      ? PlateManager.liveCount(this)
+      : PlateManager.count();
+    if (used >= PlateManager.MAX_BRUSHES) {
+      alert(`画板最多选择 ${PlateManager.MAX_BRUSHES} 段录音（含已勾选）。可先取消勾选再选新的。`);
       return;
     }
 
@@ -285,6 +290,7 @@ const App = {
     if (window.brushGenerator) {
       if (typeof window.brushGenerator.resetInkColor === "function" &&
           visualParams.palette && visualParams.palette.length) {
+        window.brushGenerator._inkBrushId = active.id;
         window.brushGenerator.resetInkColor(visualParams.palette[0]);
       }
       if (typeof window.brushGenerator.clear === "function") {

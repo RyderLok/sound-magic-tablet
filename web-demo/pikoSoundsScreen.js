@@ -20,9 +20,13 @@
     return (a && Array.isArray(a.soundLibrary)) ? a.soundLibrary : [];
   }
 
-  /** 只统计仍存在于录音库中的选择，避免历史残留 id 影响计数 */
+  /** Plate slots used (after prune) — must match App.togglePlateSelection limit. */
   function selectedCount() {
+    var a = app();
     if (!window.PlateManager) return 0;
+    if (a && typeof window.PlateManager.liveCount === 'function') {
+      return window.PlateManager.liveCount(a);
+    }
     return samples().filter(function (s) { return isSelected(s.id); }).length;
   }
 
@@ -32,6 +36,18 @@
 
   function isSelected(id) {
     return window.PlateManager ? window.PlateManager.isSelected(id) : false;
+  }
+
+  /** Drop leftover My sounds / old-batch picks so New Sounds can use all 5 slots. */
+  function syncPlateToNewSounds() {
+    var a = app();
+    if (!a || !window.PlateManager) return;
+    if (typeof window.PlateManager.prune === 'function') window.PlateManager.prune(a);
+    var latestIds = samples().map(function (s) { return s && s.id; }).filter(Boolean);
+    // Never retainOnly([]) during a transient empty sync — that would wipe picks.
+    if (latestIds.length && typeof window.PlateManager.retainOnly === 'function') {
+      window.PlateManager.retainOnly(latestIds);
+    }
   }
 
   /** Figma 用 mm:ss 两位补零（00:13） */
@@ -52,6 +68,8 @@
     var track = el('soundsTrack');
     if (!track) return;
 
+    syncPlateToNewSounds();
+
     var list = samples();
     if (!list.length) {
       track.innerHTML = '<p class="sounds-empty">No new sounds yet — go to Input first</p>';
@@ -59,7 +77,8 @@
       return;
     }
 
-    var atLimit = selectedCount() >= maxBrushes();
+    var used = selectedCount();
+    var atLimit = used >= maxBrushes();
 
     track.innerHTML = list.map(function (s, idx) {
       var picked = isSelected(s.id);
@@ -116,41 +135,28 @@
       }
 
       var preview = el('pv-' + s.id);
-      if (preview) drawPreview(preview, s, accent);
+      if (preview) drawPreview(preview, s);
     });
   }
 
-  /** 预览区：已分析的用调色板渐变，未分析留白 */
-  function drawPreview(canvas, sample, accent) {
+  /** Figma New Sounds color tile — always filled (never white empty). */
+  function drawPreview(canvas, sample) {
+    if (window.SoundColorEngine && typeof window.SoundColorEngine.drawCardPreview === 'function') {
+      window.SoundColorEngine.drawCardPreview(canvas, sample);
+      return;
+    }
     var ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    var palette = (sample.visualParams && sample.visualParams.palette) || [];
-    if (!palette.length) return;
-
-    var grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    palette.slice(0, 3).forEach(function (c, i, arr) {
-      var stop = arr.length === 1 ? 0 : i / (arr.length - 1);
-      grad.addColorStop(stop, 'rgb(' + c.r + ',' + c.g + ',' + c.b + ')');
-    });
-    ctx.fillStyle = grad;
-    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#FE2E3E';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.globalAlpha = 1;
-
-    if (accent) {
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.beginPath();
-      ctx.arc(canvas.width * 0.5, canvas.height * 0.5, canvas.height * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
 
   function updateFooter() {
     var n = selectedCount();
+    var max = maxBrushes();
     var countEl = el('soundsCount');
     if (countEl) {
-      countEl.textContent = n + ' selected';
+      countEl.textContent = n + '/' + max + ' selected';
       countEl.classList.toggle('has-selection', n > 0);
     }
     var nextBtn = el('soundsNextBtn');
@@ -198,6 +204,12 @@
       if (!event.detail || event.detail.screen !== 'sounds') return;
       var a = app();
       var client = window.SoundsApiClient;
+      // 非 Transfer 会话（例如从 Draw 进来）：不得展示上一次上传残留
+      if (client && typeof client.isTransferSessionActive === 'function' &&
+          !client.isTransferSessionActive() &&
+          typeof client.clearNewSoundsSession === 'function') {
+        client.clearNewSoundsSession();
+      }
       if (a && client && typeof client.syncIntoApp === 'function') {
         client.syncIntoApp(a).finally(function () { render(); });
       } else {

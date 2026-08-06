@@ -187,33 +187,20 @@
       }
 
       var preview = el('ms-pv-' + s.id);
-      if (preview) drawPreview(preview, s, accent);
+      if (preview) drawPreview(preview, s);
     });
   }
 
-  function drawPreview(canvas, sample, accent) {
+  /** Same Figma card fill as New Sounds — never leave blank white. */
+  function drawPreview(canvas, sample) {
+    if (window.SoundColorEngine && typeof window.SoundColorEngine.drawCardPreview === 'function') {
+      window.SoundColorEngine.drawCardPreview(canvas, sample);
+      return;
+    }
     var ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    var palette = (sample.visualParams && sample.visualParams.palette) || [];
-    if (!palette.length) return;
-
-    var grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    palette.slice(0, 3).forEach(function (c, i, arr) {
-      var stop = arr.length === 1 ? 0 : i / (arr.length - 1);
-      grad.addColorStop(stop, 'rgb(' + c.r + ',' + c.g + ',' + c.b + ')');
-    });
-    ctx.fillStyle = grad;
-    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#FE2E3E';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.globalAlpha = 1;
-
-    if (accent) {
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.beginPath();
-      ctx.arc(canvas.width * 0.5, canvas.height * 0.5, canvas.height * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
 
   function bind() {

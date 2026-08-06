@@ -311,6 +311,9 @@
 
   /** 仅 Collect→Transfer 本次新导入进 New Sounds；其余一律 My sounds 历史 */
   var LATEST_BATCH_KEY = 'piko.latestSoundBatchIds';
+  /** Wall-clock when current Transfer page opened; 0 = no live session. */
+  var transferSessionStartedAt = 0;
+  var TRANSFER_SESSION_MS = 30 * 60 * 1000;
 
   function loadLatestBatch() {
     try {
@@ -336,6 +339,11 @@
     return unique;
   }
 
+  function isTransferSessionActive() {
+    if (!transferSessionStartedAt) return false;
+    return (Date.now() - transferSessionStartedAt) < TRANSFER_SESSION_MS;
+  }
+
   function pruneLatestBatch(lib) {
     var list = Array.isArray(lib) ? lib : [];
     var batch = loadLatestBatch();
@@ -351,44 +359,74 @@
 
   /** 进入 Transfer：清空 New Sounds，旧批次全部回到历史 */
   function beginTransferSession() {
+    transferSessionStartedAt = Date.now();
+    // Fresh transfer = fresh palette picks (don't let My sounds leftovers eat the 5 slots).
+    if (window.PlateManager && typeof window.PlateManager.clear === 'function') {
+      window.PlateManager.clear();
+    }
+    return setLatestBatch([]);
+  }
+
+  /** Collect / 非上传入口：New Sounds 必须空，不能残留上一次批次 */
+  function clearNewSoundsSession() {
+    transferSessionStartedAt = 0;
+    if (window.PlateManager && typeof window.PlateManager.clear === 'function') {
+      window.PlateManager.clear();
+    }
     return setLatestBatch([]);
   }
 
   /**
-   * Transfer 同步结束：New Sounds = 本次新导入；
-   * 若已在库里（硬件上传时已 sync），回填后端最近录音，避免空列表。
+   * Only keep imports that belong to THIS transfer moment.
+   * Never backfill "recent cloud history" into New Sounds.
+   */
+  function filterIdsToTransferSession(app, ids) {
+    var list = (ids || []).filter(Boolean);
+    if (!list.length) return [];
+    var started = transferSessionStartedAt || 0;
+    if (!started) return [];
+    // Allow small clock skew vs device / server created_at.
+    var cutoff = started - 2 * 60 * 1000;
+    var lib = (app && app.soundLibrary) || [];
+    var byId = Object.create(null);
+    lib.forEach(function (s) {
+      if (!s || !s.id) return;
+      byId[s.id] = s;
+    });
+    return list.filter(function (id) {
+      var s = byId[id];
+      if (!s) return false;
+      var t = Number(s.createdAt) || 0;
+      // Brand-new local rows without createdAt still count if session is live.
+      if (!t) return isTransferSessionActive();
+      return t >= cutoff;
+    });
+  }
+
+  /**
+   * Transfer 同步结束：New Sounds = 本次会话真正新导入的 id。
+   * 禁止把云端历史最近 N 条塞进 New Sounds。
    */
   function commitTransferBatch(app, syncResult) {
     var ids = (syncResult && syncResult.importedIds) || [];
-    if (ids.length) return setLatestBatch(ids);
-
-    var rows = (syncResult && syncResult.sounds) || [];
-    var lib = (app && app.soundLibrary) || [];
-    if (!rows.length || !lib.length) return setLatestBatch([]);
-
-    var byBackend = Object.create(null);
-    lib.forEach(function (s) {
-      if (s && s.backendId) byBackend[s.backendId] = s.id;
-    });
-
-    var sorted = rows.slice().sort(function (a, b) {
-      return Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0);
-    });
-
-    var picked = [];
-    for (var i = 0; i < sorted.length && picked.length < 8; i++) {
-      var row = sorted[i];
-      if (!row || !row.id) continue;
-      var localId = byBackend[row.id];
-      if (localId) picked.push(localId);
-    }
-    return setLatestBatch(picked);
+    var fresh = filterIdsToTransferSession(app, ids);
+    return setLatestBatch(fresh);
   }
 
-  /** 硬件上传后：把本次新导入追加进 New Sounds（不整批覆盖） */
+  /** 硬件上传后：仅在 Transfer 会话内追加进 New Sounds */
   function appendLatestBatch(ids) {
     if (!ids || !ids.length) return loadLatestBatch();
-    return setLatestBatch(loadLatestBatch().concat(ids));
+    if (!isTransferSessionActive()) {
+      // Background library sync must not pollute New Sounds.
+      return loadLatestBatch();
+    }
+    var app = window.App;
+    var fresh = filterIdsToTransferSession(app, ids);
+    if (!fresh.length) {
+      // Live ESP upload during transfer: trust ids even if createdAt skews.
+      fresh = ids.filter(Boolean);
+    }
+    return setLatestBatch(loadLatestBatch().concat(fresh));
   }
 
   function sampleInBatch(sample, batchSet) {
@@ -443,6 +481,8 @@
     loadLatestBatch: loadLatestBatch,
     setLatestBatch: setLatestBatch,
     beginTransferSession: beginTransferSession,
+    clearNewSoundsSession: clearNewSoundsSession,
+    isTransferSessionActive: isTransferSessionActive,
     commitTransferBatch: commitTransferBatch,
     appendLatestBatch: appendLatestBatch,
     listLatestSamples: listLatestSamples,

@@ -63,9 +63,12 @@ function mouseReleased() {
 }
 
 function touchEnded() {
-  // iPad / Apple Pencil: ensure stroke commits when touch ends.
-  mouseReleased();
-  return false;
+  // Commit in-progress ink on finger/stylus up — but NEVER return false.
+  // p5 treats `return false` as preventDefault for the whole page, which kills
+  // button clicks / PikoRouter navigation on iPad.
+  if (canvasInteraction && canvasInteraction._strokeActive) {
+    mouseReleased();
+  }
 }
 
 function keyPressed() {

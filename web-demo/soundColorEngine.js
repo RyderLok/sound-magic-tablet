@@ -147,6 +147,88 @@ const SoundColorEngine = {
       };
       return this.liveModulate(c, f, amount);
     });
+  },
+
+  /**
+   * Figma New Sounds card fills (node 1:49 / 57:10–57:15):
+   * diagonal ~127° vivid pairs + soft center glow.
+   * Extra blue / indigo pairs follow water / wind hue families.
+   */
+  FIGMA_CARD_PAIRS: [
+    [{ r: 254, g: 46, b: 62 }, { r: 246, g: 131, b: 42 }],   // coral → orange
+    [{ r: 252, g: 186, b: 34 }, { r: 227, g: 241, b: 13 }],  // amber → lime
+    [{ r: 255, g: 96, b: 48 }, { r: 255, g: 176, b: 64 }],   // warm orange variant
+    [{ r: 46, g: 132, b: 254 }, { r: 72, g: 214, b: 246 }],  // blue → cyan (water)
+    [{ r: 64, g: 92, b: 255 }, { r: 168, g: 132, b: 255 }],  // indigo → lilac
+    [{ r: 28, g: 196, b: 168 }, { r: 96, g: 228, b: 210 }]   // teal lean
+  ],
+
+  hashId(id) {
+    let h = 0;
+    const s = String(id || "sound");
+    for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  },
+
+  /** Always return a vivid palette for card previews — never leave white. */
+  paletteForCard(sample) {
+    const vp = sample?.visualParams?.palette;
+    if (vp && vp.length >= 2) return vp;
+    if (vp && vp.length === 1) {
+      const c = vp[0];
+      return [c, {
+        r: this.clampByte(c.r * 0.85 + 40),
+        g: this.clampByte(c.g * 0.9 + 30),
+        b: this.clampByte(c.b * 0.7 + 20)
+      }];
+    }
+    if (sample?.features) {
+      const arch = sample.pythonAnalysis?.naturalArchetype
+        || sample.visualParams?.archetypeId
+        || null;
+      return this.buildFromFeatures(sample.features, arch);
+    }
+    const seed = this.hashId(sample?.id || sample?.backendId || sample?.name);
+    const pair = this.FIGMA_CARD_PAIRS[seed % this.FIGMA_CARD_PAIRS.length];
+    return [pair[0], pair[1]];
+  },
+
+  /** Paint Figma-style soft diagonal gradient + center glow onto a card canvas. */
+  drawCardPreview(canvas, sample) {
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const w = canvas.width || 195;
+    const h = canvas.height || 140;
+    ctx.clearRect(0, 0, w, h);
+
+    const palette = this.paletteForCard(sample);
+    const c0 = palette[0] || { r: 254, g: 46, b: 62 };
+    const c1 = palette[Math.min(1, palette.length - 1)] || { r: 246, g: 131, b: 42 };
+
+    // ~127.8° like Figma Rectangle 143
+    const rad = (127.8 * Math.PI) / 180;
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const len = Math.max(w, h);
+    const grad = ctx.createLinearGradient(
+      cx - Math.cos(rad) * len,
+      cy - Math.sin(rad) * len,
+      cx + Math.cos(rad) * len,
+      cy + Math.sin(rad) * len
+    );
+    grad.addColorStop(0.02, `rgb(${c0.r},${c0.g},${c0.b})`);
+    grad.addColorStop(0.98, `rgb(${c1.r},${c1.g},${c1.b})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Soft white/pink center bloom (Ellipse 62–65)
+    const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, h * 0.48);
+    glow.addColorStop(0, "rgba(255,255,255,0.58)");
+    glow.addColorStop(0.4, "rgba(255,248,245,0.22)");
+    glow.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
   }
 };
 

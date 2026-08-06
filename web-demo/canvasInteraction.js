@@ -51,7 +51,9 @@ class CanvasInteraction {
   // 这里记录指针是否落在 UI 上，绘制时据此跳过。
   _installUiGuard() {
     const isUi = (node) =>
-      !!(node && node.closest && node.closest(".piko-canvas-chrome, .piko-ui-layer"));
+      !!(node && node.closest && node.closest(
+        ".piko-canvas-chrome, .piko-ui-layer, button, a, input, textarea, select, [role='button'], [data-piko-go]"
+      ));
 
     document.addEventListener("pointerdown", (e) => {
       this._drawPointer = { x: e.clientX, y: e.clientY };
@@ -60,6 +62,8 @@ class CanvasInteraction {
     }, true);
 
     document.addEventListener("pointermove", (e) => {
+      // Keep last draw point only while actively drawing on the paper —
+      // updating on every UI move is fine, but never block UI.
       this._drawPointer = { x: e.clientX, y: e.clientY };
       this._pointerOverUi = isUi(e.target);
     }, true);
@@ -67,6 +71,7 @@ class CanvasInteraction {
     const release = (e) => {
       this._pressStartedOnUi = false;
       // Commit on pointerup too — Apple Pencil / WKWebView may skip p5 mouseReleased.
+      // Do not preventDefault / stopPropagation here (breaks navigation clicks).
       if (e && (e.type === "pointerup" || e.type === "pointercancel")) {
         if (this._strokeActive && this.canvasTool === "draw") {
           this.commitStroke();
@@ -123,7 +128,9 @@ class CanvasInteraction {
   // —— Procreate 式白纸：棕底只是桌面，transform 只动白纸 ——
   _installPaperNav() {
     const isUi = (node) =>
-      !!(node && node.closest && node.closest(".piko-canvas-chrome, .piko-ui-layer"));
+      !!(node && node.closest && node.closest(
+        ".piko-canvas-chrome, .piko-ui-layer, button, a, input, textarea, select, [role='button'], [data-piko-go]"
+      ));
 
     const onDown = (e) => {
       if (!this.isPikoCanvasMode()) return;

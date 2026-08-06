@@ -31,6 +31,26 @@ const PlateManager = {
     return this.selectedIds.length;
   },
 
+  clear() {
+    this.selectedIds = [];
+    this.activeBrushId = null;
+    this.save();
+  },
+
+  /** Keep only ids in allowList (e.g. current New Sounds batch). */
+  retainOnly(allowedIds) {
+    const allow = new Set((allowedIds || []).filter(Boolean).map(String));
+    const next = this.selectedIds.filter((id) => allow.has(String(id)));
+    if (next.length !== this.selectedIds.length) {
+      this.selectedIds = next;
+      if (this.activeBrushId && !allow.has(String(this.activeBrushId))) {
+        this.activeBrushId = this.selectedIds[0] || null;
+      }
+      this.save();
+    }
+    return this.selectedIds;
+  },
+
   /** Drop plate ids that no longer exist in the library (stale localStorage). */
   prune(app) {
     if (!app?.soundLibrary) {
@@ -146,18 +166,15 @@ const PlateManager = {
     if (!active?.visualParams) return null;
 
     const vp = { ...active.visualParams };
-    // active 笔刷的自身 palette 打头，保证画板主色与 P1/P2 预览一致；
-    // 其余 plate 颜色仅作补充，不覆盖 active 主色。
+    // Slot shows palette[0] as identity; strokes use the FULL active palette
+    // (spectrum 缤纷). Never merge other plate brushes — that stole foreign hues.
     const activePal = active.visualParams.palette || [];
-    if (activePal.length) {
-      const seen = new Set(activePal.map((c) => `${c.r},${c.g},${c.b}`));
-      const rest = platePalette.filter((c) => !seen.has(`${c.r},${c.g},${c.b}`));
-      vp.palette = activePal.concat(rest);
-    } else if (platePalette.length) {
-      vp.palette = platePalette;
-    }
+    vp.palette = activePal.length
+      ? activePal.map((c) => ({ r: c.r, g: c.g, b: c.b }))
+      : platePalette.map((c) => ({ r: c.r, g: c.g, b: c.b }));
     vp._plateBrushCount = samples.length;
     vp._activeBrushName = active.name;
+    vp._activeBrushId = active.id;
     return { active, samples, platePalette, visualParams: vp };
   }
 };
