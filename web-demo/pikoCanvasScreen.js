@@ -159,19 +159,23 @@
             console.warn('[PikoCanvas] save: empty artwork blob');
             return;
           }
-          var id = 'art_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+          var resumeId = a && a.editingArtworkId;
+          var id = resumeId ||
+            ('art_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7));
           var saved = await window.GalleryStore.save({
             id: id,
             title: 'Artwork',
             width: (ci.paper && ci.paper.w) || 880,
             height: (ci.paper && ci.paper.h) || 623,
-            createdAt: Date.now(),
+            createdAt: resumeId ? undefined : Date.now(),
+            updatedAt: Date.now(),
             imageBlob: blob
           });
           if (!saved) {
             console.warn('[PikoCanvas] save: GalleryStore.save failed');
             return;
           }
+          if (a) a.editingArtworkId = null;
           if (window.PikoRouter) window.PikoRouter.show('gallery', { mode: 'none' });
           else deactivate();
           // gallery 切屏会经 piko:screen 触发 PikoGalleryScreen.render()，这里不要再调一次（会竞态叠两套卡）

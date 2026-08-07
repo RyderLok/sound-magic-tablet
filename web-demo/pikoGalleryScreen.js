@@ -131,8 +131,13 @@
       }
 
       card.addEventListener('click', function () {
-        if (!selectMode) return;
-        toggleCard(art.id, card);
+        if (selectMode) {
+          toggleCard(art.id, card);
+          return;
+        }
+        if (window.App && typeof window.App.resumeGalleryArtwork === 'function') {
+          window.App.resumeGalleryArtwork(art.id);
+        }
       });
 
       grid.appendChild(card);

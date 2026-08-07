@@ -32,7 +32,7 @@ const GalleryStore = {
         req.onerror = function () { reject(req.error); };
         req.onsuccess = function () {
           var rows = (req.result || []).slice().sort(function (a, b) {
-            return (b.createdAt || 0) - (a.createdAt || 0);
+            return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
           });
           resolve(rows);
         };
@@ -43,16 +43,34 @@ const GalleryStore = {
     }
   },
 
+  async get(id) {
+    if (!id) return null;
+    try {
+      var db = await this.open();
+      return await new Promise(function (resolve, reject) {
+        var tx = db.transaction(GalleryStore.STORE, 'readonly');
+        var req = tx.objectStore(GalleryStore.STORE).get(id);
+        req.onerror = function () { reject(req.error); };
+        req.onsuccess = function () { resolve(req.result || null); };
+      });
+    } catch (err) {
+      console.warn('[GalleryStore] get failed:', err);
+      return null;
+    }
+  },
+
   async save(artwork) {
     if (!artwork || !artwork.id || !artwork.imageBlob) return null;
     try {
       var db = await this.open();
+      var existing = await this.get(artwork.id);
       var row = {
         id: artwork.id,
-        title: artwork.title || 'Untitled',
-        width: artwork.width || 0,
-        height: artwork.height || 0,
-        createdAt: artwork.createdAt || Date.now(),
+        title: artwork.title || (existing && existing.title) || 'Untitled',
+        width: artwork.width || (existing && existing.width) || 0,
+        height: artwork.height || (existing && existing.height) || 0,
+        createdAt: artwork.createdAt || (existing && existing.createdAt) || Date.now(),
+        updatedAt: artwork.updatedAt || Date.now(),
         imageBlob: artwork.imageBlob
       };
       await new Promise(function (resolve, reject) {

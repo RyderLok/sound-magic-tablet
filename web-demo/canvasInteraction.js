@@ -777,6 +777,66 @@ class CanvasInteraction {
   }
 
   /**
+   * 从 Gallery 的 PNG Blob 恢复画纸到 persistentLayer（继续绘画）。
+   */
+  loadArtworkFromBlob(blob) {
+    return new Promise((resolve) => {
+      if (!blob || !this.persistentLayer) {
+        resolve(false);
+        return;
+      }
+
+      const applyImg = (img) => {
+        try {
+          if (this._strokeActive && this.canvasTool === "draw") {
+            try { this.commitStroke(); } catch (e) { /* noop */ }
+          }
+          if (this.artLayer) this.artLayer.clear();
+          if (this.brushGenerator && typeof this.brushGenerator.clear === "function") {
+            this.brushGenerator.clear();
+          }
+          this._strokeActive = false;
+          this.persistentLayer.clear();
+          const w = this.persistentLayer.width;
+          const h = this.persistentLayer.height;
+          this.persistentLayer.image(img, 0, 0, w, h);
+          resolve(true);
+        } catch (err) {
+          console.warn("[CanvasInteraction] loadArtworkFromBlob failed:", err);
+          resolve(false);
+        }
+      };
+
+      const url = URL.createObjectURL(blob);
+      if (typeof loadImage === "function") {
+        loadImage(
+          url,
+          (img) => {
+            URL.revokeObjectURL(url);
+            applyImg(img);
+          },
+          () => {
+            URL.revokeObjectURL(url);
+            resolve(false);
+          }
+        );
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        applyImg(img);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(false);
+      };
+      img.src = url;
+    });
+  }
+
+  /**
    * 导出当前白纸为 PNG Blob（白底 + 持久层 + 未提交笔迹）。
    * 供保存到 My Gallery 使用。
    */

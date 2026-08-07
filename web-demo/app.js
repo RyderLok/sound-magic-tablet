@@ -5,6 +5,8 @@ const App = {
   previousFeatures: null,
   plateMode: false,
   _plateCanvasInitialized: false,
+  /** 从 My Gallery 打开续画时写入；保存时覆盖同一 id */
+  editingArtworkId: null,
 
   canvasInteraction: null,
   sampleAnalyzer: null,
@@ -330,6 +332,8 @@ const App = {
       return;
     }
 
+    // 新建画板会话：不要覆盖 Gallery 里正在编辑的那张
+    this.editingArtworkId = null;
     this.plateMode = true;
     if (!PlateManager.activeBrushId || !PlateManager.isSelected(PlateManager.activeBrushId)) {
       PlateManager.activeBrushId = samples[0].id;
@@ -369,7 +373,104 @@ const App = {
     const metaEl = document.getElementById("analysisMeta");
     if (nameEl) nameEl.textContent = `色盘画板 · ${brushCount} brush`;
     if (metaEl) {
-      metaEl.textContent = `当前：${activeSample.name} · 切换上方 brush 用不同声音绘画`;
+      if (activeSample && activeSample.name) {
+        metaEl.textContent = `当前：${activeSample.name} · 切换上方 brush 用不同声音绘画`;
+      } else if (this.editingArtworkId) {
+        metaEl.textContent = "继续绘画 · 保存将更新这张画作";
+      } else {
+        metaEl.textContent = "在白纸上绘画";
+      }
+    }
+  },
+
+  /**
+   * My Gallery：点击已保存画作 → 载入画板继续画；再保存覆盖同一 id。
+   */
+  async resumeGalleryArtwork(artId) {
+    if (!artId || typeof GalleryStore === "undefined") return;
+    this.bootstrapServices();
+
+    const art = await GalleryStore.get(artId);
+    if (!art || !art.imageBlob) {
+      console.warn("[App] resumeGalleryArtwork: artwork missing", artId);
+      return;
+    }
+
+    this.editingArtworkId = art.id;
+    this.plateMode = true;
+    // 已有画纸内容，不要被 applyActiveBrushGlobals(clear) 清掉
+    this._plateCanvasInitialized = true;
+
+    let active = null;
+    const brushReady =
+      typeof PlateManager !== "undefined" && typeof PlateManager.brushReadySamples === "function"
+        ? PlateManager.brushReadySamples(this)
+        : [];
+
+    if (brushReady.length) {
+      if (!PlateManager.activeBrushId || !PlateManager.isSelected(PlateManager.activeBrushId)) {
+        PlateManager.activeBrushId = brushReady[0].id;
+      }
+      active = this.applyActiveBrushGlobals(false);
+    } else if (this.visualMappingEngine) {
+      if (!window.activeVisualParams) {
+        window.activeVisualParams = this.visualMappingEngine.compute(this.defaultPersonality);
+        window.activePersonality = { ...this.defaultPersonality };
+      }
+      if (
+        !window.activeBrushParams &&
+        typeof BrushSchema !== "undefined" &&
+        typeof BrushSchema.fromVisualAndModifiers === "function"
+      ) {
+        window.activeBrushParams = BrushSchema.fromVisualAndModifiers(
+          window.activeVisualParams || {},
+          {},
+          {}
+        );
+      }
+    }
+
+    const brushCount =
+      typeof PlateManager !== "undefined" && typeof PlateManager.count === "function"
+        ? PlateManager.count()
+        : brushReady.length;
+
+    if (window.PikoRouter && typeof window.PikoRouter.show === "function") {
+      window.PikoRouter.show("analysis", { mode: "none" });
+    } else {
+      document.getElementById("libraryView")?.classList.add("hidden");
+      document.getElementById("transformView")?.classList.add("hidden");
+      document.getElementById("analysisView")?.classList.remove("hidden");
+    }
+
+    if (this.transformView) this.transformView.stop();
+    this.updatePlateStudioHeader(active, brushCount);
+    this.renderBrushStrip();
+    if (active && typeof this.renderPlateInterpretationPanel === "function") {
+      this.renderPlateInterpretationPanel(active, brushCount);
+    }
+
+    if (window.PikoCanvasScreen && typeof window.PikoCanvasScreen.activate === "function") {
+      window.PikoCanvasScreen.activate();
+    }
+
+    const blob = art.imageBlob;
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+    const holder = document.getElementById("canvasHolder");
+    if (holder && typeof resizeCanvas === "function") {
+      resizeCanvas(holder.offsetWidth || 880, holder.offsetHeight || 623);
+      if (this.canvasInteraction) this.canvasInteraction.resize();
+    }
+
+    if (
+      this.canvasInteraction &&
+      typeof this.canvasInteraction.loadArtworkFromBlob === "function"
+    ) {
+      const ok = await this.canvasInteraction.loadArtworkFromBlob(blob);
+      if (!ok) console.warn("[App] resumeGalleryArtwork: failed to load image onto canvas");
     }
   },
 
