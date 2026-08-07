@@ -162,6 +162,9 @@
           var resumeId = a && a.editingArtworkId;
           var id = resumeId ||
             ('art_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7));
+          var brushSnapshot = (a && typeof a.captureBrushSnapshot === 'function')
+            ? a.captureBrushSnapshot()
+            : null;
           var saved = await window.GalleryStore.save({
             id: id,
             title: 'Artwork',
@@ -169,11 +172,15 @@
             height: (ci.paper && ci.paper.h) || 623,
             createdAt: resumeId ? undefined : Date.now(),
             updatedAt: Date.now(),
-            imageBlob: blob
+            imageBlob: blob,
+            brushSnapshot: brushSnapshot
           });
           if (!saved) {
             console.warn('[PikoCanvas] save: GalleryStore.save failed');
             return;
+          }
+          if (a && brushSnapshot && typeof a.saveBrushSnapshotCache === 'function') {
+            a.saveBrushSnapshotCache(id, brushSnapshot);
           }
           if (a) a.editingArtworkId = null;
           if (window.PikoRouter) window.PikoRouter.show('gallery', { mode: 'none' });

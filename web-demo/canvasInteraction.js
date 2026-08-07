@@ -457,18 +457,81 @@ class CanvasInteraction {
     this.artLayer.elt.style.display = "none";
     this.persistentLayer = createGraphics(width, height);
     this.persistentLayer.elt.style.display = "none";
-    this.artLayer.image(prev, 0, 0, width, height);
-    this.persistentLayer.image(prevPersist, 0, 0, width, height);
+    this._copyGraphicsRaw(prev, this.artLayer);
+    this._copyGraphicsRaw(prevPersist, this.persistentLayer);
+    // Gallery 续画：尺寸变化后用原图再铺一次，避免 1×1→大画布拷贝失败
+    if (this._artworkRestoreImg && (this._artworkBaseActive || this._artworkRestorePending)) {
+      this._blitArtworkImage(this._artworkRestoreImg);
+    }
+  }
+
+  _copyGraphicsRaw(fromG, toG) {
+    if (!fromG || !toG || !fromG.elt || !toG.elt) return;
+    try {
+      const ctx = toG.drawingContext || toG.elt.getContext("2d");
+      if (!ctx) return;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, toG.elt.width, toG.elt.height);
+      ctx.drawImage(fromG.elt, 0, 0, toG.elt.width, toG.elt.height);
+      ctx.restore();
+    } catch (err) {
+      try { toG.image(fromG, 0, 0, width, height); } catch (e) { /* noop */ }
+    }
+  }
+
+  /** 清除 Gallery 续画缓存（新开画板 / 清空时调用） */
+  clearArtworkRestore() {
+    this._artworkRestoreImg = null;
+    this._artworkRestoreBlob = null;
+    this._artworkRestorePending = false;
+    this._artworkBaseActive = false;
+    try { window.__PIKO_GALLERY_IMG__ = null; } catch (e) { /* noop */ }
+  }
+
+  /** 把续画底图烤进 persistent，之后只靠笔迹层（橡皮才能擦掉原作） */
+  bakeArtworkRestore() {
+    if (!this._artworkRestoreImg) return false;
+    const ok = this._blitArtworkImage(this._artworkRestoreImg);
+    if (ok) {
+      this._artworkBaseActive = false;
+      this._artworkRestorePending = false;
+    }
+    return ok;
   }
 
   setCanvasTool(tool) {
     if (tool === "erase" && this._strokeActive) this.commitStroke();
+    // 橡皮要改到原作像素：先把底图烤进 persistent
+    if (tool === "erase" && this._artworkBaseActive) {
+      this.bakeArtworkRestore();
+    }
     this.canvasTool = tool === "erase" ? "erase" : "draw";
     if (this.brushGenerator) this.brushGenerator.setTool(this.canvasTool);
   }
 
   commitStroke() {
     if (!this.brushGenerator || !this.artLayer || !this.persistentLayer) return;
+    if (this._artworkBaseActive && this._artworkRestoreImg) {
+      // 只烤底图进 persistent，不要 clear() 掉正在提交的 live 笔迹
+      try {
+        const g = this.persistentLayer;
+        const canvas = g && g.elt;
+        const ctx = g && (g.drawingContext || (canvas && canvas.getContext("2d")));
+        const src = this._artworkRestoreImg.canvas || this._artworkRestoreImg.elt || this._artworkRestoreImg;
+        if (ctx && canvas && src) {
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = "source-over";
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+          ctx.restore();
+        }
+      } catch (e) { /* noop */ }
+      this._artworkBaseActive = false;
+      this._artworkRestorePending = false;
+    }
     this.brushGenerator.commitLiveTo(this.persistentLayer, this.artLayer);
     this._strokeActive = false;
     this._pointerWasDown = false;
@@ -496,9 +559,27 @@ class CanvasInteraction {
     ctx.beginPath();
     ctx.rect(r.x, r.y, r.w, r.h);
     ctx.clip();
-    image(this.persistentLayer, 0, 0);
+
+    // Gallery 续画：每帧先画底图，确保即使用户侧 persistent 拷贝失败也能看见原作
+    if (this._artworkBaseActive && this._artworkRestoreImg) {
+      try {
+        const src = this._artworkRestoreImg.canvas || this._artworkRestoreImg.elt || this._artworkRestoreImg;
+        ctx.drawImage(src, 0, 0, width, height);
+      } catch (e) { /* noop */ }
+    }
+
+    // 用原生 drawImage 画离屏层（比 p5.image 更稳，尤其是 raw blit 之后）
+    const drawG = (g) => {
+      if (!g || !g.elt) return;
+      try {
+        ctx.drawImage(g.elt, 0, 0, width, height);
+      } catch (e) {
+        try { image(g, 0, 0); } catch (err) { /* noop */ }
+      }
+    };
+    drawG(this.persistentLayer);
     if (this.canvasTool === "draw") {
-      image(this.artLayer, 0, 0);
+      drawG(this.artLayer);
     }
     ctx.restore();
   }
@@ -512,6 +593,7 @@ class CanvasInteraction {
     this._lastAcousticViz = null;
     this._lastShapeProfileVersion = null;
     this.leftField?.clearShapeProfile?.();
+    this.clearArtworkRestore();
   }
 
   resetField() {
@@ -523,6 +605,7 @@ class CanvasInteraction {
     this._lastAcousticViz = null;
     this._lastShapeProfileVersion = null;
     this.leftField?.clearShapeProfile?.();
+    this.clearArtworkRestore();
   }
 
   layout() {
@@ -595,6 +678,8 @@ class CanvasInteraction {
     if (canDraw) {
       const inCenter = this._isInCenterZone(l, pt.x, pt.y);
       if (inCenter) {
+        // 用户开始续画后，禁止 resize 再把原 Gallery 图盖回去
+        this._artworkRestorePending = false;
         // First sample of a press: seed lastMouse to current so we don't
         // rubber-band a line from the previous stroke (or from 0,0).
         if (!this._pointerWasDown) {
@@ -644,6 +729,23 @@ class CanvasInteraction {
       // Figma：白画板内纯白底，圆角由 .canvas-holder 裁切
       fill(255, 255, 255);
       rect(0, 0, width, height);
+      // Gallery 续画：白底之后立刻铺原图（主画布可见；Swift 桥也会打同一补丁）
+      const restore =
+        window.__PIKO_GALLERY_IMG__ ||
+        (this._artworkBaseActive && this._artworkRestoreImg) ||
+        null;
+      if (restore && typeof drawingContext !== "undefined" && width > 1 && height > 1) {
+        try {
+          const ctx = drawingContext;
+          const d = typeof pixelDensity === "function" ? (pixelDensity() || 1) : 1;
+          ctx.save();
+          ctx.setTransform(d, 0, 0, d, 0, 0);
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = "source-over";
+          ctx.drawImage(restore, 0, 0, width, height);
+          ctx.restore();
+        } catch (e) { /* noop */ }
+      }
       return;
     }
     fill(255, 255, 255, 235);
@@ -777,68 +879,103 @@ class CanvasInteraction {
   }
 
   /**
-   * 从 Gallery 的 PNG Blob 恢复画纸到 persistentLayer（继续绘画）。
+   * 把已解码的画作画进 persistentLayer。
+   * 必须按 canvas 实际像素（elt.width）读写，不能只用 p5 逻辑 width（Retina/density 会错位变空白）。
+   */
+  _blitArtworkImage(img) {
+    if (!img || !this.persistentLayer) return false;
+    try {
+      if (this.artLayer) this.artLayer.clear();
+      if (this.brushGenerator && typeof this.brushGenerator.clear === "function") {
+        // 只清 live 笔迹簇，不要在这里 commitStroke（会与 bake 互相递归）
+        this.brushGenerator.clear();
+      }
+      this._strokeActive = false;
+
+      const g = this.persistentLayer;
+      const canvas = g.elt;
+      if (!canvas) return false;
+      const ctx = g.drawingContext || canvas.getContext("2d");
+      if (!ctx) return false;
+
+      const pw = Math.max(1, canvas.width || 1);
+      const ph = Math.max(1, canvas.height || 1);
+      const src = img.canvas || img.elt || img;
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+      ctx.clearRect(0, 0, pw, ph);
+      ctx.drawImage(src, 0, 0, pw, ph);
+      ctx.restore();
+      return true;
+    } catch (err) {
+      console.warn("[CanvasInteraction] _blitArtworkImage failed:", err);
+      return false;
+    }
+  }
+
+  /**
+   * 从 Gallery 的 PNG Blob 恢复画纸（继续绘画）。
    */
   loadArtworkFromBlob(blob) {
+    const self = this;
     return new Promise((resolve) => {
       if (!blob || !this.persistentLayer) {
         resolve(false);
         return;
       }
 
-      const applyImg = (img) => {
-        try {
-          if (this._strokeActive && this.canvasTool === "draw") {
-            try { this.commitStroke(); } catch (e) { /* noop */ }
-          }
-          if (this.artLayer) this.artLayer.clear();
-          if (this.brushGenerator && typeof this.brushGenerator.clear === "function") {
-            this.brushGenerator.clear();
-          }
-          this._strokeActive = false;
-          this.persistentLayer.clear();
-          const w = this.persistentLayer.width;
-          const h = this.persistentLayer.height;
-          this.persistentLayer.image(img, 0, 0, w, h);
-          resolve(true);
-        } catch (err) {
-          console.warn("[CanvasInteraction] loadArtworkFromBlob failed:", err);
-          resolve(false);
-        }
+      this._artworkRestoreBlob = blob;
+      this._artworkRestorePending = true;
+      this._artworkBaseActive = true;
+
+      const applyDecoded = (img) => {
+        self._artworkRestoreImg = img;
+        const ok = self._blitArtworkImage(img);
+        // 保持 baseActive：drawPlateInk 每帧 underlay，直到 bake / 首次落笔
+        self._artworkBaseActive = true;
+        self._artworkRestorePending = true;
+        setTimeout(() => {
+          self._artworkRestorePending = false;
+        }, 1200);
+        resolve(!!ok || !!img);
       };
 
-      const url = URL.createObjectURL(blob);
-      if (typeof loadImage === "function") {
-        loadImage(
-          url,
-          (img) => {
-            URL.revokeObjectURL(url);
-            applyImg(img);
-          },
-          () => {
-            URL.revokeObjectURL(url);
-            resolve(false);
-          }
-        );
+      if (typeof createImageBitmap === "function") {
+        createImageBitmap(blob).then((bitmap) => {
+          applyDecoded(bitmap);
+        }).catch(() => {
+          // fallback Image
+          decodeViaImage();
+        });
         return;
       }
 
-      const img = new Image();
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        applyImg(img);
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        resolve(false);
-      };
-      img.src = url;
+      function decodeViaImage() {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          applyDecoded(img);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          self._artworkRestorePending = false;
+          self._artworkBaseActive = false;
+          console.warn("[CanvasInteraction] loadArtworkFromBlob: image decode failed");
+          resolve(false);
+        };
+        img.src = url;
+      }
+
+      decodeViaImage();
     });
   }
 
   /**
-   * 导出当前白纸为 PNG Blob（白底 + 持久层 + 未提交笔迹）。
-   * 供保存到 My Gallery 使用。
+   * 导出当前白纸为 PNG Blob（白底 + 续画底图 + 持久层 + 未提交笔迹）。
    */
   exportArtworkPng() {
     const w = Math.max(1, Math.round(this.paper?.w || width || 880));
@@ -866,6 +1003,13 @@ class CanvasInteraction {
     // 若有未提交的 live 笔迹，先合进去再导出
     if (this._strokeActive && this.canvasTool === "draw") {
       try { this.commitStroke(); } catch (e) { /* noop */ }
+    }
+
+    if (this._artworkBaseActive && this._artworkRestoreImg) {
+      try {
+        const src = this._artworkRestoreImg.canvas || this._artworkRestoreImg.elt || this._artworkRestoreImg;
+        ctx.drawImage(src, 0, 0, w, h);
+      } catch (e) { /* noop */ }
     }
 
     drawLayer(this.persistentLayer);

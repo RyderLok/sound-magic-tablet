@@ -71,7 +71,10 @@ const GalleryStore = {
         height: artwork.height || (existing && existing.height) || 0,
         createdAt: artwork.createdAt || (existing && existing.createdAt) || Date.now(),
         updatedAt: artwork.updatedAt || Date.now(),
-        imageBlob: artwork.imageBlob
+        imageBlob: artwork.imageBlob,
+        brushSnapshot: artwork.brushSnapshot != null
+          ? artwork.brushSnapshot
+          : (existing && existing.brushSnapshot) || null
       };
       await new Promise(function (resolve, reject) {
         var tx = db.transaction(GalleryStore.STORE, 'readwrite');

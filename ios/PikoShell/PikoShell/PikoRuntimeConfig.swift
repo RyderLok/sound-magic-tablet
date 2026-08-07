@@ -69,6 +69,8 @@ final class PikoRuntimeConfig: ObservableObject {
         var comps = URLComponents(string: "http://127.0.0.1:\(LocalPikoGateway.port)/")
         var items: [URLQueryItem] = [
             URLQueryItem(name: "api", value: "http://127.0.0.1:\(LocalPikoGateway.port)"),
+            // Bust WKWebView cache so Gallery/Swift bridge + WebDemo sync always load.
+            URLQueryItem(name: "piko_build", value: String(Int(Date().timeIntervalSince1970))),
         ]
         let esp = esp32Base.trimmingCharacters(in: .whitespacesAndNewlines)
         if !esp.isEmpty {

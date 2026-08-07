@@ -334,6 +334,9 @@ const App = {
 
     // 新建画板会话：不要覆盖 Gallery 里正在编辑的那张
     this.editingArtworkId = null;
+    if (this.canvasInteraction && typeof this.canvasInteraction.clearArtworkRestore === "function") {
+      this.canvasInteraction.clearArtworkRestore();
+    }
     this.plateMode = true;
     if (!PlateManager.activeBrushId || !PlateManager.isSelected(PlateManager.activeBrushId)) {
       PlateManager.activeBrushId = samples[0].id;
@@ -384,6 +387,192 @@ const App = {
   },
 
   /**
+   * 保存画作时附带当前色盘笔刷快照，续画时恢复顶栏色槽。
+   * Plate 为空时，仍用当前全局视觉参数生成 1 个可续画 brush，避免下次打开无色槽。
+   */
+  captureBrushSnapshot() {
+    if (typeof PlateManager === "undefined") return null;
+    const clone = (obj) => {
+      if (!obj) return null;
+      try { return JSON.parse(JSON.stringify(obj)); } catch (e) { return null; }
+    };
+    const samples = PlateManager.getSelectedSamples(this) || [];
+    let brushes = samples.map((s) => ({
+      id: s.id,
+      name: s.name || "Brush",
+      status: "analyzed",
+      visualParams: clone(s.visualParams),
+      styleModifiers: clone(s.styleModifiers),
+      features: clone(s.features) || {},
+      aiResult: clone(s.aiResult),
+      pythonBrush: clone(s.pythonBrush),
+      acoustic: clone(s.acoustic),
+      shapeProfile: clone(s.shapeProfile)
+    }));
+
+    if (!brushes.length && window.activeVisualParams) {
+      brushes = [{
+        id: "gallery_session_brush",
+        name: "Saved brush",
+        status: "analyzed",
+        visualParams: clone(window.activeVisualParams),
+        styleModifiers: {},
+        features: clone(window.activeAcousticFeatures || window.activeAudioFeatures) || {},
+        aiResult: clone(window.activeAiResult),
+        pythonBrush: null,
+        acoustic: clone(window.activeAcousticViz),
+        shapeProfile: clone(window.activeShapeProfile)
+      }];
+    }
+
+    if (!brushes.length) return null;
+
+    const selectedIds = brushes.map((b) => b.id);
+    const snap = {
+      selectedIds: selectedIds,
+      activeBrushId:
+        (PlateManager.activeBrushId && selectedIds.indexOf(PlateManager.activeBrushId) >= 0)
+          ? PlateManager.activeBrushId
+          : selectedIds[0],
+      brushes: brushes
+    };
+    return snap;
+  },
+
+  /** localStorage 备份：IndexedDB 行里没有 brushSnapshot 的旧画也能尽量找回 */
+  _brushCacheKey(artId) {
+    return "piko_gallery_brushes_v1_" + String(artId || "");
+  },
+
+  saveBrushSnapshotCache(artId, snapshot) {
+    if (!artId || !snapshot) return;
+    try {
+      localStorage.setItem(this._brushCacheKey(artId), JSON.stringify(snapshot));
+    } catch (e) { /* noop */ }
+  },
+
+  loadBrushSnapshotCache(artId) {
+    if (!artId) return null;
+    try {
+      const raw = localStorage.getItem(this._brushCacheKey(artId));
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      if (!snap || !Array.isArray(snap.brushes) || !snap.brushes.length) return null;
+      return snap;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  /**
+   * 从 Gallery 画作快照恢复 Plate 笔刷（样本可能已不在 New Sounds）。
+   * 只要装上了色槽就返回 active（或占位对象），避免被当成失败。
+   */
+  restoreBrushSnapshot(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.brushes) || !snapshot.brushes.length) {
+      return null;
+    }
+    if (typeof PlateManager === "undefined") return null;
+
+    const ids = [];
+    for (let i = 0; i < snapshot.brushes.length && ids.length < PlateManager.MAX_BRUSHES; i++) {
+      const b = snapshot.brushes[i];
+      if (!b || !b.id) continue;
+      let sample = this.soundLibrary.find((s) => s && s.id === b.id);
+      if (!sample) {
+        sample = {
+          id: b.id,
+          name: b.name || "Brush",
+          status: "analyzed",
+          visualParams: b.visualParams || null,
+          styleModifiers: b.styleModifiers || null,
+          features: b.features || {},
+          aiResult: b.aiResult || null,
+          pythonBrush: b.pythonBrush || null,
+          acoustic: b.acoustic || null,
+          shapeProfile: b.shapeProfile || null,
+          source: "gallery-restore",
+          file: null,
+          duration: 0
+        };
+        this.soundLibrary.push(sample);
+      } else {
+        if (b.visualParams) sample.visualParams = b.visualParams;
+        sample.status = "analyzed";
+        if (b.features) sample.features = b.features;
+        if (b.aiResult) sample.aiResult = b.aiResult;
+        if (b.styleModifiers) sample.styleModifiers = b.styleModifiers;
+      }
+      // 无 palette 时给一个可点的默认色，避免空槽
+      if (!sample.visualParams) sample.visualParams = {};
+      if (!sample.visualParams.palette || !sample.visualParams.palette.length) {
+        sample.visualParams.palette = [
+          { r: 120, g: 150, b: 90 },
+          { r: 80, g: 110, b: 70 },
+          { r: 160, g: 140, b: 70 }
+        ];
+      }
+      ids.push(sample.id);
+    }
+
+    if (!ids.length) return null;
+
+    PlateManager.selectedIds = ids.slice();
+    const wantActive = snapshot.activeBrushId;
+    PlateManager.activeBrushId =
+      (wantActive && ids.indexOf(wantActive) >= 0) ? wantActive : ids[0];
+    PlateManager.save();
+
+    let active = this.applyActiveBrushGlobals(false);
+    if (!active) {
+      active = this.soundLibrary.find((s) => s && s.id === PlateManager.activeBrushId) || null;
+      if (active && active.visualParams) {
+        window.activeVisualParams = active.visualParams;
+        window.activeFusedVisualParams = active.visualParams;
+      }
+    }
+    this.plateMode = true;
+    this.renderBrushStrip();
+    if (window.PikoCanvasScreen && typeof window.PikoCanvasScreen.renderPalette === "function") {
+      window.PikoCanvasScreen.renderPalette();
+    }
+    return active || { id: ids[0], name: "Brush" };
+  },
+
+  /**
+   * 无快照时：用曲库里已分析的声音顶上色盘（最多 5），保证能继续画。
+   */
+  async restoreBrushesFromLibraryFallback() {
+    if (typeof PlateManager === "undefined") return null;
+    if (!this.soundLibrary.length && typeof SampleLibraryStore !== "undefined") {
+      try {
+        const stored = await SampleLibraryStore.loadAll();
+        if (stored && stored.length) this.soundLibrary = stored;
+      } catch (e) { /* noop */ }
+    }
+    const ready = this.soundLibrary
+      .filter((s) => s && PlateManager.isBrushReady(s))
+      .slice(0, PlateManager.MAX_BRUSHES);
+    if (!ready.length) return null;
+    return this.restoreBrushSnapshot({
+      selectedIds: ready.map((s) => s.id),
+      activeBrushId: ready[0].id,
+      brushes: ready.map((s) => ({
+        id: s.id,
+        name: s.name || "Brush",
+        status: "analyzed",
+        visualParams: s.visualParams,
+        styleModifiers: s.styleModifiers,
+        features: s.features || {},
+        aiResult: s.aiResult,
+        pythonBrush: s.pythonBrush,
+        acoustic: s.acoustic,
+        shapeProfile: s.shapeProfile
+      }))
+    });
+  },
+
+  /**
    * My Gallery：点击已保存画作 → 载入画板继续画；再保存覆盖同一 id。
    */
   async resumeGalleryArtwork(artId) {
@@ -398,21 +587,28 @@ const App = {
 
     this.editingArtworkId = art.id;
     this.plateMode = true;
-    // 已有画纸内容，不要被 applyActiveBrushGlobals(clear) 清掉
     this._plateCanvasInitialized = true;
 
-    let active = null;
-    const brushReady =
-      typeof PlateManager !== "undefined" && typeof PlateManager.brushReadySamples === "function"
-        ? PlateManager.brushReadySamples(this)
-        : [];
-
-    if (brushReady.length) {
-      if (!PlateManager.activeBrushId || !PlateManager.isSelected(PlateManager.activeBrushId)) {
-        PlateManager.activeBrushId = brushReady[0].id;
+    // 笔刷来源：画作快照 → localStorage 备份 → 当前 Plate → 曲库已分析声音
+    let snapshot = art.brushSnapshot || this.loadBrushSnapshotCache(art.id);
+    let active = this.restoreBrushSnapshot(snapshot);
+    if (!active) {
+      const brushReady =
+        typeof PlateManager !== "undefined" && typeof PlateManager.brushReadySamples === "function"
+          ? PlateManager.brushReadySamples(this)
+          : [];
+      if (brushReady.length) {
+        active = this.restoreBrushSnapshot({
+          selectedIds: brushReady.map((s) => s.id),
+          activeBrushId: PlateManager.activeBrushId || brushReady[0].id,
+          brushes: brushReady
+        });
       }
-      active = this.applyActiveBrushGlobals(false);
-    } else if (this.visualMappingEngine) {
+    }
+    if (!active) {
+      active = await this.restoreBrushesFromLibraryFallback();
+    }
+    if (!active && this.visualMappingEngine) {
       if (!window.activeVisualParams) {
         window.activeVisualParams = this.visualMappingEngine.compute(this.defaultPersonality);
         window.activePersonality = { ...this.defaultPersonality };
@@ -430,10 +626,29 @@ const App = {
       }
     }
 
+    // 若这次成功恢复了笔刷，写回画作 + 缓存，下次打开一定有色槽
+    if (active) {
+      const snap = this.captureBrushSnapshot();
+      if (snap) {
+        this.saveBrushSnapshotCache(art.id, snap);
+        try {
+          await GalleryStore.save({
+            id: art.id,
+            imageBlob: art.imageBlob,
+            brushSnapshot: snap,
+            width: art.width,
+            height: art.height,
+            title: art.title,
+            createdAt: art.createdAt
+          });
+        } catch (e) { /* noop */ }
+      }
+    }
+
     const brushCount =
       typeof PlateManager !== "undefined" && typeof PlateManager.count === "function"
-        ? PlateManager.count()
-        : brushReady.length;
+        ? PlateManager.getSelectedSamples(this).length
+        : 0;
 
     if (window.PikoRouter && typeof window.PikoRouter.show === "function") {
       window.PikoRouter.show("analysis", { mode: "none" });
@@ -453,25 +668,72 @@ const App = {
     if (window.PikoCanvasScreen && typeof window.PikoCanvasScreen.activate === "function") {
       window.PikoCanvasScreen.activate();
     }
+    if (window.PikoCanvasScreen && typeof window.PikoCanvasScreen.renderPalette === "function") {
+      window.PikoCanvasScreen.renderPalette();
+    }
 
     const blob = art.imageBlob;
-    await new Promise((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(resolve));
-    });
+    const resumeToken = (this._galleryResumeToken = (this._galleryResumeToken || 0) + 1);
 
-    const holder = document.getElementById("canvasHolder");
-    if (holder && typeof resizeCanvas === "function") {
-      resizeCanvas(holder.offsetWidth || 880, holder.offsetHeight || 623);
-      if (this.canvasInteraction) this.canvasInteraction.resize();
-    }
+    const fitCanvas = () => {
+      const holder = document.getElementById("canvasHolder");
+      if (!holder || typeof resizeCanvas !== "function") return holder;
+      const w = holder.offsetWidth || 880;
+      const h = holder.offsetHeight || 623;
+      if (w > 10 && h > 10) {
+        resizeCanvas(w, h);
+        if (this.canvasInteraction) this.canvasInteraction.resize();
+      }
+      return holder;
+    };
+
+    const waitHolder = async () => {
+      const deadline = Date.now() + 1200;
+      while (Date.now() < deadline) {
+        if (this._galleryResumeToken !== resumeToken) return null;
+        const holder = document.getElementById("canvasHolder");
+        const view = document.getElementById("analysisView");
+        const viewOk = view && !view.classList.contains("hidden");
+        if (viewOk && holder && holder.offsetWidth > 40 && holder.offsetHeight > 40) {
+          return holder;
+        }
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return document.getElementById("canvasHolder");
+    };
+
+    await waitHolder();
+    if (this._galleryResumeToken !== resumeToken) return;
+    fitCanvas();
 
     if (
-      this.canvasInteraction &&
-      typeof this.canvasInteraction.loadArtworkFromBlob === "function"
+      !this.canvasInteraction ||
+      typeof this.canvasInteraction.loadArtworkFromBlob !== "function"
     ) {
-      const ok = await this.canvasInteraction.loadArtworkFromBlob(blob);
-      if (!ok) console.warn("[App] resumeGalleryArtwork: failed to load image onto canvas");
+      console.warn("[App] resumeGalleryArtwork: canvasInteraction missing");
+      return;
     }
+
+    let ok = await this.canvasInteraction.loadArtworkFromBlob(blob);
+    if (this._galleryResumeToken !== resumeToken) return;
+
+    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => requestAnimationFrame(r));
+    if (this._galleryResumeToken !== resumeToken) return;
+    fitCanvas();
+    if (this.canvasInteraction._artworkRestoreImg) {
+      this.canvasInteraction._artworkBaseActive = true;
+      ok = this.canvasInteraction._blitArtworkImage(this.canvasInteraction._artworkRestoreImg) || ok;
+    } else if (!ok) {
+      ok = await this.canvasInteraction.loadArtworkFromBlob(blob);
+    }
+
+    // 布局稳定后再刷一次色盘（activate 可能抢先画了空槽）
+    if (window.PikoCanvasScreen && typeof window.PikoCanvasScreen.renderPalette === "function") {
+      window.PikoCanvasScreen.renderPalette();
+    }
+    this.renderBrushStrip();
+    if (!ok) console.warn("[App] resumeGalleryArtwork: failed to load image onto canvas");
   },
 
   renderBrushStrip() {

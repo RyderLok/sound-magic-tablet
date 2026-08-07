@@ -22,6 +22,7 @@
 		A1000000000000000000000E /* QwenOmniClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* QwenOmniClient.swift */; };
 		A1000000000000000000000F /* IpadAudioAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* IpadAudioAnalysis.swift */; };
 		A10000000000000000000010 /* MultipartForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* MultipartForm.swift */; };
+		A10000000000000000000011 /* PikoWebBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* PikoWebBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +42,7 @@
 		A2000000000000000000000E /* QwenOmniClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QwenOmniClient.swift; sourceTree = "<group>"; };
 		A2000000000000000000000F /* IpadAudioAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IpadAudioAnalysis.swift; sourceTree = "<group>"; };
 		A20000000000000000000010 /* MultipartForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultipartForm.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* PikoWebBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikoWebBridge.swift; sourceTree = "<group>"; };
 		A30000000000000000000001 /* PikoShell.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PikoShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -81,6 +83,7 @@
 				A2000000000000000000000E /* QwenOmniClient.swift */,
 				A2000000000000000000000F /* IpadAudioAnalysis.swift */,
 				A20000000000000000000010 /* MultipartForm.swift */,
+				A20000000000000000000011 /* PikoWebBridge.swift */,
 				A20000000000000000000006 /* Info.plist */,
 			);
 			path = PikoShell;
@@ -201,6 +204,7 @@
 				A1000000000000000000000E /* QwenOmniClient.swift in Sources */,
 				A1000000000000000000000F /* IpadAudioAnalysis.swift in Sources */,
 				A10000000000000000000010 /* MultipartForm.swift in Sources */,
+				A10000000000000000000011 /* PikoWebBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
