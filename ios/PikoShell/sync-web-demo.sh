@@ -10,6 +10,7 @@ fi
 mkdir -p "$DST"
 rsync -a --delete \
   --exclude '_shots/' \
+  --exclude '_demo/' \
   --exclude 'brush-preview.html' \
   --exclude 'brush-preview-presets.json' \
   --exclude 'brush-stamps/' \

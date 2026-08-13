@@ -175,6 +175,8 @@
       pillText('Something went wrong');
       running = false;
       if (view) view.stop();
+      var host = el('magicOrbWrap');
+      if (host) host.classList.remove('has-orb-canvas');
       return;
     }
 

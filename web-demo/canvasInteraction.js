@@ -13,16 +13,15 @@ class CanvasInteraction {
       enableShapeMorph: true,
       shapeMorphStrength: 0.72
     });
-    this.artLayer = createGraphics(width, height);
-    this.artLayer.elt.style.display = "none";
-    this.persistentLayer = createGraphics(width, height);
-    this.persistentLayer.elt.style.display = "none";
+    this.artLayer = this._makeInkLayer(width, height);
+    this.persistentLayer = this._makeInkLayer(width, height);
     this.canvasTool = "draw";
     this._strokeActive = false;
     this.lastMouse = { x: 0, y: 0 };
     this._pointerWasDown = false;
     /** Latest pointer in client/window coords — used to beat p5 mouse under CSS transforms. */
     this._drawPointer = null;
+    this._pointerIsDown = false;
     this._pressStartedOnUi = false;
     this._pointerOverUi = false;
     // Figma 1:298 白纸默认：Rectangle 136 @ (87,157) 880×623 rx30
@@ -46,6 +45,132 @@ class CanvasInteraction {
     this.clear();
   }
 
+  /** p5 createGraphics is often blank/throws in WKWebView; native 2D is the draw fallback. */
+  _makeInkLayer(w, h) {
+    const wk = !!(window.webkit && window.webkit.messageHandlers);
+    if (!wk && typeof createGraphics === "function") {
+      try {
+        const g = createGraphics(w, h);
+        if (g && g.elt) {
+          g.elt.style.display = "none";
+          if (this._probeInkLayer(g)) return g;
+          if (typeof g.remove === "function") g.remove();
+        }
+      } catch (err) {
+        /* native fallback */
+      }
+    }
+    return this._nativeInkLayer(w, h);
+  }
+
+  _probeInkLayer(g) {
+    try {
+      const ctx = g.drawingContext || (g.elt && g.elt.getContext("2d"));
+      if (!ctx) return false;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "rgb(17, 34, 51)";
+      ctx.fillRect(0, 0, 2, 2);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      ctx.clearRect(0, 0, 2, 2);
+      ctx.restore();
+      return d && d[0] === 17 && d[1] === 34 && d[2] === 51;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  _disposeInkLayer(g) {
+    if (!g) return;
+    try {
+      if (typeof g.remove === "function") g.remove();
+    } catch (err) { /* noop */ }
+    try {
+      if (g.elt && g.elt.parentNode) g.elt.parentNode.removeChild(g.elt);
+    } catch (err) { /* noop */ }
+  }
+
+  _nativeInkLayer(w, h) {
+    const canvas = document.createElement("canvas");
+    const lw = Math.max(1, Math.round(w) || 1);
+    const lh = Math.max(1, Math.round(h) || 1);
+    canvas.width = lw;
+    canvas.height = lh;
+    canvas.style.display = "none";
+    const ctx = canvas.getContext("2d");
+    const rgba = (r, g, b, a) => {
+      const aa = a == null ? 1 : Math.max(0, Math.min(1, a / 255));
+      return "rgba(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + "," + aa + ")";
+    };
+    const layer = {
+      elt: canvas,
+      canvas,
+      drawingContext: ctx,
+      width: lw,
+      height: lh,
+      _doStroke: false,
+      _doFill: true,
+      _fill: "rgba(0,0,0,1)",
+      _stroke: "rgba(0,0,0,1)",
+      _weight: 1,
+      noStroke() { this._doStroke = false; },
+      stroke(r, g, b, a) {
+        this._doStroke = true;
+        this._stroke = rgba(r, g, b, a);
+      },
+      strokeWeight(n) { this._weight = n; },
+      fill(r, g, b, a) {
+        this._doFill = true;
+        this._fill = rgba(r, g, b, a);
+      },
+      clear() {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+      },
+      rect(x, y, rw, rh) {
+        if (this._doFill) {
+          ctx.fillStyle = this._fill;
+          ctx.fillRect(x, y, rw, rh);
+        }
+      },
+      circle(x, y, d) {
+        ctx.beginPath();
+        ctx.arc(x, y, d / 2, 0, Math.PI * 2);
+        if (this._doFill) {
+          ctx.fillStyle = this._fill;
+          ctx.fill();
+        }
+        if (this._doStroke) {
+          ctx.strokeStyle = this._stroke;
+          ctx.lineWidth = this._weight;
+          ctx.stroke();
+        }
+      },
+      point(x, y) {
+        ctx.fillStyle = this._stroke;
+        ctx.fillRect(x, y, Math.max(1, this._weight), Math.max(1, this._weight));
+      },
+      line(x1, y1, x2, y2) {
+        ctx.strokeStyle = this._stroke;
+        ctx.lineWidth = this._weight;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      },
+      image(other, x, y) {
+        const src = other && (other.elt || other.canvas || other);
+        if (!src) return;
+        ctx.drawImage(src, x || 0, y || 0, canvas.width, canvas.height);
+      },
+      remove() {}
+    };
+    return layer;
+  }
+
   // p5 的 mouseIsPressed / mouseX 是全局量：按在浮层 UI（画布顶栏等）上也会为真，
   // 全幅模式下整块画布都是绘制区，于是点按钮会在其下方留笔迹。
   // 这里记录指针是否落在 UI 上，绘制时据此跳过。
@@ -59,6 +184,11 @@ class CanvasInteraction {
       this._drawPointer = { x: e.clientX, y: e.clientY };
       this._pressStartedOnUi = isUi(e.target);
       this._pointerOverUi = this._pressStartedOnUi;
+      // WKWebView / Apple Pencil often never set p5 mouseIsPressed.
+      const penOrTouch = e.pointerType === "pen" || e.pointerType === "touch";
+      if (!this._pressStartedOnUi && (penOrTouch || e.button === 0)) {
+        this._pointerIsDown = true;
+      }
     }, true);
 
     document.addEventListener("pointermove", (e) => {
@@ -70,6 +200,7 @@ class CanvasInteraction {
 
     const release = (e) => {
       this._pressStartedOnUi = false;
+      this._pointerIsDown = false;
       // Commit on pointerup too — Apple Pencil / WKWebView may skip p5 mouseReleased.
       // Do not preventDefault / stopPropagation here (breaks navigation clicks).
       if (e && (e.type === "pointerup" || e.type === "pointercancel")) {
@@ -453,12 +584,12 @@ class CanvasInteraction {
   resize() {
     const prev = this.artLayer;
     const prevPersist = this.persistentLayer;
-    this.artLayer = createGraphics(width, height);
-    this.artLayer.elt.style.display = "none";
-    this.persistentLayer = createGraphics(width, height);
-    this.persistentLayer.elt.style.display = "none";
+    this.artLayer = this._makeInkLayer(width, height);
+    this.persistentLayer = this._makeInkLayer(width, height);
     this._copyGraphicsRaw(prev, this.artLayer);
     this._copyGraphicsRaw(prevPersist, this.persistentLayer);
+    this._disposeInkLayer(prev);
+    this._disposeInkLayer(prevPersist);
     // Gallery 续画：尺寸变化后用原图再铺一次，避免 1×1→大画布拷贝失败
     if (this._artworkRestoreImg && (this._artworkBaseActive || this._artworkRestorePending)) {
       this._blitArtworkImage(this._artworkRestoreImg);
@@ -669,8 +800,9 @@ class CanvasInteraction {
     }
 
     const pt = this._currentDrawPoint();
+    const pressed = !!(mouseIsPressed || this._pointerIsDown);
     const canDraw =
-      mouseIsPressed &&
+      pressed &&
       this.isMouseInsidePoint(pt) &&
       !this.isPointerOnUi() &&
       !this.isNavigating();
@@ -708,9 +840,13 @@ class CanvasInteraction {
 
     this.brushGenerator.updateAudioFeatures(visualParameters, personalityVector, aiResult);
     if (this.canvasTool === "draw") {
-      this.brushGenerator.updateAndDraw(
-        this.artLayer, visualParameters, personalityVector, aiResult
-      );
+      try {
+        this.brushGenerator.updateAndDraw(
+          this.artLayer, visualParameters, personalityVector, aiResult
+        );
+      } catch (err) {
+        console.warn("[canvas] brush draw skipped:", err);
+      }
     }
     this.brushGenerator.updateEraseWaves(this.persistentLayer);
 

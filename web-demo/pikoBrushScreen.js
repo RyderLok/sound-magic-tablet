@@ -167,16 +167,57 @@
     };
   }
 
+  function defaultPalette() {
+    return [
+      { r: 241, g: 110, b: 28 },
+      { r: 253, g: 191, b: 66 },
+      { r: 210, g: 140, b: 90 }
+    ];
+  }
+
+  function asRgb(c) {
+    if (!c) return null;
+    if (typeof c.r === 'number' && typeof c.g === 'number' && typeof c.b === 'number') {
+      return { r: c.r, g: c.g, b: c.b };
+    }
+    if (Array.isArray(c) && c.length >= 3) {
+      return { r: c[0], g: c[1], b: c[2] };
+    }
+    return null;
+  }
+
+  function resolvePreviewPalette(sample) {
+    var raw = (sample && sample.visualParams && sample.visualParams.palette) || [];
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+      var rgb = asRgb(raw[i]);
+      if (rgb) out.push(rgb);
+    }
+    if (out.length) return out;
+    if (window.SoundColorEngine && typeof window.SoundColorEngine.paletteForCard === 'function') {
+      var card = window.SoundColorEngine.paletteForCard(sample) || [];
+      for (var j = 0; j < card.length; j++) {
+        var rgb2 = asRgb(card[j]);
+        if (rgb2) out.push(rgb2);
+      }
+    }
+    return out.length ? out : defaultPalette();
+  }
+
+  function isWkWebView() {
+    return !!(window.webkit && window.webkit.messageHandlers);
+  }
+
   function paintFallback(ctx, sample, now) {
     var w = ctx.canvas.width;
     var h = ctx.canvas.height;
-    var palette = (sample.visualParams && sample.visualParams.palette) || [];
+    var palette = resolvePreviewPalette(sample);
     ctx.fillStyle = PAPER_HEX;
     ctx.fillRect(0, 0, w, h);
 
-    if (!palette.length) return;
-    var t = (now - preview.t0) / 1000;
-    var pattern = (sample.visualParams && sample.visualParams.strokePattern) || 'flow_field';
+    var t = ((now || performance.now()) - (preview.t0 || now || 0)) / 1000;
+    var pattern = (sample && sample.visualParams && sample.visualParams.strokePattern) || 'flow_field';
+    var energy = (sample && sample.features && sample.features.energy) || 0.45;
     var c0 = palette[0];
     var c1 = palette[1] || c0;
     ctx.lineCap = 'round';
@@ -185,8 +226,8 @@
     for (var i = 0; i < 36; i++) {
       var u = t * 0.9 - i * 0.045;
       if (u < 0) continue;
-      var a = demoPoint(pattern, u, w, h, 0.4);
-      var b = demoPoint(pattern, u + 0.03, w, h, 0.4);
+      var a = demoPoint(pattern, u, w, h, energy);
+      var b = demoPoint(pattern, u + 0.03, w, h, energy);
       var fade = 1 - i / 36;
       var mix = i % 2 ? c1 : c0;
       ctx.strokeStyle = 'rgba(' + mix.r + ',' + mix.g + ',' + mix.b + ',' + (0.18 + fade * 0.55) + ')';
@@ -227,7 +268,9 @@
 
     var w = canvas.width;
     var h = canvas.height;
-    var useP5 = typeof BrushGenerator === 'function' && ensurePreviewLayers(w, h);
+    // iPad WKWebView: p5 offscreen createGraphics often draws nothing / throws and kills rAF.
+    // Keep real BrushGenerator for the drawing canvas; preview uses 2D trail there.
+    var useP5 = !isWkWebView() && typeof BrushGenerator === 'function' && ensurePreviewLayers(w, h);
     if (useP5) {
       preview.brush = new BrushGenerator();
       preview.brush.persistStrokes = true;
@@ -249,41 +292,49 @@
       if (preview.sampleId !== sample.id) return;
       var ctx = canvas.getContext('2d');
       var vp = sample.visualParams || {};
+      if (!vp.palette || !vp.palette.length) {
+        vp = Object.assign({}, vp, { palette: resolvePreviewPalette(sample) });
+      }
       var pattern = vp.strokePattern || 'flow_field';
       var energy = (sample.features && sample.features.energy) || 0.35;
 
       if (useP5 && preview.brush && preview.art) {
-        var bp = resolveBrushParams(sample);
-        var prevBrush = window.activeBrushParams;
-        var prevAf = window.activeAcousticFeatures;
-        window.activeBrushParams = bp;
-        if (sample.features) window.activeAcousticFeatures = sample.features;
+        try {
+          var bp = resolveBrushParams(sample);
+          var prevBrush = window.activeBrushParams;
+          var prevAf = window.activeAcousticFeatures;
+          window.activeBrushParams = bp;
+          if (sample.features) window.activeAcousticFeatures = sample.features;
 
-        // 预览节奏：约 8s 转一圈，约 10s 轻清一次（原先约 4s / 4.8s 偏快）
-        preview.phase += 0.016 * (0.42 + energy * 0.28);
-        var pt = demoPoint(pattern, preview.phase, w, h, energy);
-        preview.brush.addStroke(pt.x, pt.y, preview.prevX, preview.prevY, vp);
-        preview.prevX = pt.x;
-        preview.prevY = pt.y;
-        preview.strokeAge += 0.016;
+          // 预览节奏：约 8s 转一圈，约 10s 轻清一次（原先约 4s / 4.8s 偏快）
+          preview.phase += 0.016 * (0.42 + energy * 0.28);
+          var pt = demoPoint(pattern, preview.phase, w, h, energy);
+          preview.brush.addStroke(pt.x, pt.y, preview.prevX, preview.prevY, vp);
+          preview.prevX = pt.x;
+          preview.prevY = pt.y;
+          preview.strokeAge += 0.016;
 
-        // 周期性轻清一次，避免粒子堆满变糊
-        if (preview.strokeAge > 10) {
-          preview.persist.clear();
-          preview.art.clear();
-          preview.brush.clear();
-          preview.strokeAge = 0;
+          // 周期性轻清一次，避免粒子堆满变糊
+          if (preview.strokeAge > 10) {
+            preview.persist.clear();
+            preview.art.clear();
+            preview.brush.clear();
+            preview.strokeAge = 0;
+          }
+
+          preview.brush.updateAndDraw(preview.art, vp, sample.aiResult || {}, sample.aiResult || null, null);
+
+          ctx.fillStyle = PAPER_HEX;
+          ctx.fillRect(0, 0, w, h);
+          if (preview.persist && preview.persist.elt) ctx.drawImage(preview.persist.elt, 0, 0);
+          if (preview.art && preview.art.elt) ctx.drawImage(preview.art.elt, 0, 0);
+
+          window.activeBrushParams = prevBrush;
+          window.activeAcousticFeatures = prevAf;
+        } catch (err) {
+          useP5 = false;
+          paintFallback(ctx, sample, now);
         }
-
-        preview.brush.updateAndDraw(preview.art, vp, sample.aiResult || {}, sample.aiResult || null, null);
-
-        ctx.fillStyle = PAPER_HEX;
-        ctx.fillRect(0, 0, w, h);
-        if (preview.persist.elt) ctx.drawImage(preview.persist.elt, 0, 0);
-        if (preview.art.elt) ctx.drawImage(preview.art.elt, 0, 0);
-
-        window.activeBrushParams = prevBrush;
-        window.activeAcousticFeatures = prevAf;
       } else {
         paintFallback(ctx, sample, now);
       }

@@ -32,18 +32,22 @@ function draw() {
   if (!canvasInteraction) return;
   if (!window.activeVisualParams) return;
 
-  const fused = VisualPipeline.tick({
-    baseParams: window.activeVisualParams,
-    personality: window.activePersonality,
-    aiResult: window.activeAiResult,
-    features: window.activeAudioFeatures
-  });
+  try {
+    const fused = VisualPipeline.tick({
+      baseParams: window.activeVisualParams,
+      personality: window.activePersonality,
+      aiResult: window.activeAiResult,
+      features: window.activeAudioFeatures
+    });
 
-  canvasInteraction.updateAndDraw(
-    fused.visualParams,
-    fused.personality,
-    fused.aiResult
-  );
+    canvasInteraction.updateAndDraw(
+      fused.visualParams,
+      fused.personality,
+      fused.aiResult
+    );
+  } catch (err) {
+    console.warn("[p5] draw skipped:", err);
+  }
 }
 
 function windowResized() {

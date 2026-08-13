@@ -365,9 +365,15 @@ class BrushGenerator {
   commitLiveTo(persistentGraphics, liveGraphics) {
     if (!persistentGraphics || !liveGraphics) return;
     const ctx = persistentGraphics.drawingContext;
+    const src = liveGraphics.elt || liveGraphics.canvas || liveGraphics;
     ctx.save();
     ctx.globalCompositeOperation = "source-over";
-    persistentGraphics.image(liveGraphics, 0, 0);
+    if (src && persistentGraphics.elt) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(src, 0, 0, persistentGraphics.elt.width, persistentGraphics.elt.height);
+    } else if (typeof persistentGraphics.image === "function") {
+      persistentGraphics.image(liveGraphics, 0, 0);
+    }
     ctx.restore();
     liveGraphics.clear();
     this.clusters = [];
@@ -419,6 +425,7 @@ class BrushGenerator {
   }
 
   drawParticle(graphics, p, c, alpha, pattern, burst) {
+    if (!c || typeof c.r !== "number") return;
     switch (pattern) {
       case "scatter_points": {
         graphics.noStroke();
@@ -748,14 +755,17 @@ class BrushGenerator {
   }
 
   resetInkColor(initial) {
-    const c = initial || { r: 120, g: 115, b: 110 };
+    const c = (initial && typeof initial.r === "number")
+      ? initial
+      : { r: 120, g: 115, b: 110 };
     this.smoothedInk = { r: c.r, g: c.g, b: c.b };
   }
 
   particleColor(palette, particle, fallbackInk) {
-    if (!palette?.length) return fallbackInk || { r: 120, g: 115, b: 110 };
-    // One brush = one spectrum palette → particles pick across THAT palette (缤纷).
-    // Other plate brushes are not merged in, so switching slots changes the family.
+    const fallback = (fallbackInk && typeof fallbackInk.r === "number")
+      ? fallbackInk
+      : { r: 120, g: 115, b: 110 };
+    if (!palette?.length) return fallback;
     const af = window.activeAcousticFeatures || {};
     const spread =
       (this.smoothed.centroid || 0) * 1.2
@@ -764,7 +774,8 @@ class BrushGenerator {
       + (af.trebleRatio || 0) * 1.1
       + (particle.orbit || 0) * 2.2;
     const idx = Math.floor(Math.abs((particle.colorSeed || 0) * 1.7 + spread * 3.1)) % palette.length;
-    const base = palette[idx] || fallbackInk || palette[0];
+    const base = palette[idx] || palette[0] || fallback;
+    if (!base || typeof base.r !== "number") return fallback;
     if (typeof SoundColorEngine === "undefined") return base;
     return SoundColorEngine.liveModulate(base, {
       bass: this.smoothed.low,
@@ -780,14 +791,16 @@ class BrushGenerator {
     const brushId = vp._activeBrushId || window.PlateManager?.activeBrushId || null;
     if (brushId && brushId !== this._inkBrushId) {
       this._inkBrushId = brushId;
-      if (palette[0]) this.resetInkColor(palette[0]);
+      if (palette[0] && typeof palette[0].r === "number") this.resetInkColor(palette[0]);
     }
 
     let target = { r: 140, g: 120, b: 180 };
     if (palette.length) {
-      // Spectrum energy walks within this brush's own colors (not a flat swatch).
       const idx = this.inkIndexFromAudio(palette.length);
-      target = { r: palette[idx].r, g: palette[idx].g, b: palette[idx].b };
+      const swatch = palette[idx] || palette[0];
+      if (swatch && typeof swatch.r === "number") {
+        target = { r: swatch.r, g: swatch.g, b: swatch.b };
+      }
     }
     const dr = Math.abs(this.smoothedInk.r - target.r);
     const dg = Math.abs(this.smoothedInk.g - target.g);
@@ -800,11 +813,13 @@ class BrushGenerator {
   }
 
   inkIndexFromAudio(paletteLen) {
-    const t = this.smoothed.treble;
-    const m = this.smoothed.mid;
-    const l = this.smoothed.low;
-    const mix = t * 0.45 + m * 0.35 + l * 0.2;
-    return Math.min(paletteLen - 1, Math.floor(mix * paletteLen));
+    // smoothed uses `high` (not `treble`) — reading treble made idx=NaN and blanked previews
+    const t = this.smoothed.high || 0;
+    const m = this.smoothed.mid || 0;
+    const l = this.smoothed.low || 0;
+    const mix = Math.min(1, Math.max(0, t * 0.45 + m * 0.35 + l * 0.2));
+    const n = Math.max(1, paletteLen | 0);
+    return Math.min(n - 1, Math.floor(mix * n));
   }
 
   applyPaletteBias(c, bias) {

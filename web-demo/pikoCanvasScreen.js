@@ -18,10 +18,43 @@
     return window.PlateManager.getSelectedSamples(a) || [];
   }
 
+  function asRgb(c) {
+    if (!c) return null;
+    if (typeof c.r === 'number' && typeof c.g === 'number' && typeof c.b === 'number') {
+      return { r: c.r, g: c.g, b: c.b };
+    }
+    if (Array.isArray(c) && c.length >= 3) {
+      return { r: Number(c[0]), g: Number(c[1]), b: Number(c[2]) };
+    }
+    if (typeof c === 'string') {
+      var hex = c.trim();
+      if (hex.charAt(0) === '#') hex = hex.slice(1);
+      if (hex.length === 3) {
+        hex = hex.charAt(0) + hex.charAt(0) + hex.charAt(1) + hex.charAt(1) + hex.charAt(2) + hex.charAt(2);
+      }
+      if (hex.length === 6) {
+        var n = parseInt(hex, 16);
+        if (!isNaN(n)) {
+          return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+        }
+      }
+      var m = c.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+      if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+    }
+    return null;
+  }
+
   function slotColor(sample) {
     var pal = sample && sample.visualParams && sample.visualParams.palette;
-    if (pal && pal[0]) return 'rgb(' + pal[0].r + ',' + pal[0].g + ',' + pal[0].b + ')';
-    return 'var(--piko-orange)';
+    var c = asRgb(pal && pal[0]);
+    if (!c && window.SoundColorEngine && typeof window.SoundColorEngine.paletteForCard === 'function') {
+      var card = window.SoundColorEngine.paletteForCard(sample) || [];
+      c = asRgb(card[0]);
+    }
+    if (c) {
+      return 'rgb(' + Math.round(c.r) + ',' + Math.round(c.g) + ',' + Math.round(c.b) + ')';
+    }
+    return '#F16E1C';
   }
 
   function renderPalette() {

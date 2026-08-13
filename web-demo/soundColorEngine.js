@@ -123,6 +123,9 @@ const SoundColorEngine = {
   },
 
   liveModulate(color, features, amount) {
+    if (!color || typeof color.r !== "number") {
+      return { r: 120, g: 115, b: 110 };
+    }
     const a = Math.min(1, Math.max(0, amount ?? 0.15));
     const bass = this.clamp01(features?.bass);
     const mid = this.clamp01(features?.mid);
