@@ -149,8 +149,11 @@ class CanvasInteraction {
         }
       },
       point(x, y) {
-        ctx.fillStyle = this._stroke;
-        ctx.fillRect(x, y, Math.max(1, this._weight), Math.max(1, this._weight));
+        const s = Math.max(2.4, this._weight * 1.8);
+        ctx.beginPath();
+        ctx.arc(x, y, s / 2, 0, Math.PI * 2);
+        ctx.fillStyle = this._doStroke ? this._stroke : this._fill;
+        ctx.fill();
       },
       line(x1, y1, x2, y2) {
         ctx.strokeStyle = this._stroke;
@@ -1162,3 +1165,14 @@ class CanvasInteraction {
 }
 
 window.CanvasInteraction = CanvasInteraction;
+window.pikoMakeInkLayer = function (w, h) {
+  const proto = CanvasInteraction.prototype;
+  return proto._makeInkLayer.call(
+    {
+      _probeInkLayer: proto._probeInkLayer,
+      _nativeInkLayer: proto._nativeInkLayer
+    },
+    w,
+    h
+  );
+};

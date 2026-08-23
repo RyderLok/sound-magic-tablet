@@ -7,6 +7,13 @@
 (function () {
   'use strict';
 
+  var _dbgPreviewFrames = 0;
+  function dbgPreview(hypothesisId, location, message, data) {
+    // #region agent log
+    fetch('http://127.0.0.1:7274/ingest/1e028b38-4df1-46c4-9587-0c428ccf5226',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'37f927'},body:JSON.stringify({sessionId:'37f927',runId:'post-fix',hypothesisId:hypothesisId,location:location,message:message,data:data||{},timestamp:Date.now()})}).catch(function(){});
+    // #endregion
+  }
+
   var activeId = null;
   var preview = {
     raf: null,
@@ -99,18 +106,52 @@
     };
   }
 
+  function layerKindOf(g) {
+    if (!g) return 'none';
+    if (typeof g.pixelDensity === 'function') return 'p5';
+    return 'native';
+  }
+
   function ensurePreviewLayers(w, h) {
-    if (typeof createGraphics !== 'function') return false;
     if (preview.art && preview.art.width === w && preview.art.height === h) return true;
     if (preview.art && typeof preview.art.remove === 'function') preview.art.remove();
     if (preview.persist && typeof preview.persist.remove === 'function') preview.persist.remove();
-    preview.art = createGraphics(w, h);
-    preview.persist = createGraphics(w, h);
-    preview.art.pixelDensity(1);
-    preview.persist.pixelDensity(1);
-    preview.art.clear();
-    preview.persist.clear();
-    return true;
+    preview.art = null;
+    preview.persist = null;
+
+    var wk = isWkWebView();
+    if (!wk && typeof createGraphics === 'function') {
+      try {
+        preview.art = createGraphics(w, h);
+        preview.persist = createGraphics(w, h);
+        preview.art.pixelDensity(1);
+        preview.persist.pixelDensity(1);
+        preview.art.clear();
+        preview.persist.clear();
+        dbgPreview('E', 'pikoBrushScreen.js:ensurePreviewLayers', 'layers ok', {
+          w: w, h: h, kind: 'p5', hasElt: !!(preview.art && preview.art.elt)
+        });
+        return true;
+      } catch (err) {
+        dbgPreview('E', 'pikoBrushScreen.js:ensurePreviewLayers', 'p5 layers throw', { err: String(err && err.message || err) });
+        preview.art = null;
+        preview.persist = null;
+      }
+    }
+
+    if (typeof window.pikoMakeInkLayer === 'function') {
+      preview.art = window.pikoMakeInkLayer(w, h);
+      preview.persist = window.pikoMakeInkLayer(w, h);
+      if (preview.art && preview.persist) {
+        dbgPreview('A', 'pikoBrushScreen.js:ensurePreviewLayers', 'layers ok', {
+          w: w, h: h, kind: layerKindOf(preview.art), wk: wk, hasElt: !!preview.art.elt
+        });
+        return true;
+      }
+    }
+
+    dbgPreview('E', 'pikoBrushScreen.js:ensurePreviewLayers', 'no layers', { w: w, h: h, wk: wk });
+    return false;
   }
 
   function stopLivePreview() {
@@ -223,6 +264,17 @@
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
+    if (_dbgPreviewFrames < 3) {
+      dbgPreview('A', 'pikoBrushScreen.js:paintFallback', 'fallback stroke', {
+        pattern: pattern,
+        energy: energy,
+        pal0: c0,
+        lineW: 1.2 + 2.4,
+        canvasW: w,
+        canvasH: h
+      });
+    }
+
     for (var i = 0; i < 36; i++) {
       var u = t * 0.9 - i * 0.045;
       if (u < 0) continue;
@@ -237,6 +289,11 @@
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
     }
+    ctx.save();
+    ctx.fillStyle = 'rgba(65,58,53,0.88)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('fallback ' + pattern, 10, 18);
+    ctx.restore();
   }
 
   function startLivePreview(sample) {
@@ -268,13 +325,34 @@
 
     var w = canvas.width;
     var h = canvas.height;
-    // iPad WKWebView: p5 offscreen createGraphics often draws nothing / throws and kills rAF.
-    // Keep real BrushGenerator for the drawing canvas; preview uses 2D trail there.
-    var useP5 = !isWkWebView() && typeof BrushGenerator === 'function' && ensurePreviewLayers(w, h);
+    // WKWebView: p5 createGraphics is skipped; native ink layers still run BrushGenerator.
+    var wk = isWkWebView();
+    var hasBG = typeof BrushGenerator === 'function';
+    var layersOk = hasBG && ensurePreviewLayers(w, h);
+    var useP5 = layersOk;
+    var rect = canvas.getBoundingClientRect();
+    var pal0 = resolvePreviewPalette(sample)[0] || null;
+    dbgPreview('A', 'pikoBrushScreen.js:startLivePreview', 'preview start', {
+      wk: wk,
+      hasBG: hasBG,
+      layersOk: layersOk,
+      useP5: useP5,
+      pattern: (sample.visualParams && sample.visualParams.strokePattern) || null,
+      name: sample.name || sample.id,
+      pal0: pal0,
+      layerKind: layerKindOf(preview.art),
+      cssW: rect.width,
+      cssH: rect.height,
+      bitW: w,
+      bitH: h,
+      ua: (navigator.userAgent || '').slice(0, 80)
+    });
+    _dbgPreviewFrames = 0;
     if (useP5) {
       preview.brush = new BrushGenerator();
       preview.brush.persistStrokes = true;
-      preview.brush.POINT_ALPHA = 34;
+      preview.brush.POINT_ALPHA = 52;
+      preview.brush.LIVE_TRAIL_FADE = 1;
       preview.art.clear();
       preview.persist.clear();
       var start = demoPoint(
@@ -298,7 +376,11 @@
       var pattern = vp.strokePattern || 'flow_field';
       var energy = (sample.features && sample.features.energy) || 0.35;
 
+      _dbgPreviewFrames += 1;
       if (useP5 && preview.brush && preview.art) {
+        if (_dbgPreviewFrames === 1) {
+          dbgPreview('A', 'pikoBrushScreen.js:frame', 'using p5 BrushGenerator', { pattern: pattern, energy: energy });
+        }
         try {
           var bp = resolveBrushParams(sample);
           var prevBrush = window.activeBrushParams;
@@ -328,14 +410,23 @@
           ctx.fillRect(0, 0, w, h);
           if (preview.persist && preview.persist.elt) ctx.drawImage(preview.persist.elt, 0, 0);
           if (preview.art && preview.art.elt) ctx.drawImage(preview.art.elt, 0, 0);
+          ctx.save();
+          ctx.fillStyle = 'rgba(65,58,53,0.88)';
+          ctx.font = '12px sans-serif';
+          ctx.fillText((layerKindOf(preview.art) || '?') + (useP5 ? ' brush' : ' fallback') + ' ' + pattern, 10, 18);
+          ctx.restore();
 
           window.activeBrushParams = prevBrush;
           window.activeAcousticFeatures = prevAf;
         } catch (err) {
+          dbgPreview('B', 'pikoBrushScreen.js:frame', 'p5 threw, fallback', { err: String(err && err.message || err) });
           useP5 = false;
           paintFallback(ctx, sample, now);
         }
       } else {
+        if (_dbgPreviewFrames === 1) {
+          dbgPreview('A', 'pikoBrushScreen.js:frame', 'using fallback 2D', { pattern: pattern, useP5: useP5, wk: isWkWebView() });
+        }
         paintFallback(ctx, sample, now);
       }
 

@@ -23,6 +23,8 @@ final class LocalPikoGateway {
             do {
                 let params = NWParameters.tcp
                 params.allowLocalEndpointReuse = true
+                params.includePeerToPeer = true
+                params.acceptLocalOnly = false
                 let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.port)!)
                 listener.newConnectionHandler = { [weak self] conn in
                     self?.handle(connection: conn)
@@ -33,6 +35,7 @@ final class LocalPikoGateway {
                         self?.isRunning = true
                         self?.lastError = nil
                         print("[piko-gateway] listening on 0.0.0.0:\(Self.port)")
+                        Self.nudgeLocalNetworkPermission()
                     case .failed(let err):
                         self?.isRunning = false
                         self?.lastError = err.localizedDescription
@@ -48,6 +51,16 @@ final class LocalPikoGateway {
                 print("[piko-gateway] start error: \(error)")
             }
         }
+    }
+
+    /// iOS 14+ may silently drop LAN accepts until Local Network is prompted.
+    private static func nudgeLocalNetworkPermission() {
+        let host = NWEndpoint.Host("224.0.0.251")
+        let conn = NWConnection(host: host, port: 5353, using: .udp)
+        conn.start(queue: .global(qos: .utility))
+        conn.send(content: Data([0]), completion: .contentProcessed { _ in
+            conn.cancel()
+        })
     }
 
     func stop() {

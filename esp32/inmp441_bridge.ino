@@ -68,7 +68,7 @@ int wifiDiscScanI = 1;
 #define WIFI_DISCOVER_PROBES_PER_TICK 4
 #endif
 #ifndef WIFI_UPLOAD_CONNECT_MS
-#define WIFI_UPLOAD_CONNECT_MS 3000
+#define WIFI_UPLOAD_CONNECT_MS 8000
 #endif
 #ifndef WIFI_UPLOAD_TIMEOUT_MS
 #define WIFI_UPLOAD_TIMEOUT_MS 15000
@@ -649,8 +649,9 @@ bool connectWifiSta(bool force) {
       Serial.printf("[wifi] upload host (fixed) %s OK\n", wifiUploadHost);
       snprintf(wifiStatusLine, sizeof(wifiStatusLine), "Up %s", wifiUploadHost);
     } else {
-      Serial.printf("[wifi] fixed host %s not reachable yet\n", wifiUploadHost);
-      wifiUploadHost[0] = '\0';
+      // Keep the configured IP — iPad gateway often is not ready at STA connect.
+      Serial.printf("[wifi] fixed host %s not reachable yet (will retry on upload)\n", wifiUploadHost);
+      snprintf(wifiStatusLine, sizeof(wifiStatusLine), "Up %s?", wifiUploadHost);
     }
   }
   setupWifiHttpServer();
@@ -685,8 +686,8 @@ bool wifiProbeHealth(const char *host) {
   if (!host || !host[0]) return false;
   HTTPClient http;
   String url = String("http://") + host + ":" + String(WIFI_UPLOAD_PORT) + "/health";
-  http.setConnectTimeout(600);
-  http.setTimeout(800);
+  http.setConnectTimeout(2000);
+  http.setTimeout(2500);
   if (!http.begin(url)) return false;
   int code = http.GET();
   http.end();
@@ -831,18 +832,15 @@ void wifiAppendPcm(const int16_t *samples, int count) {
 void wifiAnnounceToPython();
 void pollWifiUpload();
 
-bool wifiUploadRecordingOnce() {
-  if (!wifiInitFs()) return false;
-  if (!wifiUploadHost[0]) return false;
-
+bool wifiUploadToHost(const char *host) {
+  if (!host || !host[0]) return false;
   File f = LittleFS.open(WIFI_REC_PATH, FILE_READ);
   if (!f || f.size() < 512) {
-    Serial.println("[wifi] rec file missing/small");
     if (f) f.close();
     return false;
   }
 
-  String url = String("http://") + wifiUploadHost + ":" + String(WIFI_UPLOAD_PORT)
+  String url = String("http://") + host + ":" + String(WIFI_UPLOAD_PORT)
     + "/sounds/upload_pcm?sample_rate=" + String(SAMPLE_RATE)
     + "&source=esp32-wifi";
 
@@ -863,6 +861,49 @@ bool wifiUploadRecordingOnce() {
 
   Serial.printf("[wifi] upload HTTP %d %s\n", code, body.c_str());
   return (code >= 200 && code < 300);
+}
+
+static void wifiAddUploadCandidate(char hosts[][32], int *n, int maxN, const char *h) {
+  if (!h || !h[0] || *n >= maxN) return;
+  for (int i = 0; i < *n; i++) {
+    if (strcmp(hosts[i], h) == 0) return;
+  }
+  strncpy(hosts[*n], h, 31);
+  hosts[*n][31] = '\0';
+  (*n)++;
+}
+
+bool wifiUploadRecordingOnce() {
+  if (!wifiInitFs()) return false;
+  if (!LittleFS.exists(WIFI_REC_PATH)) {
+    Serial.println("[wifi] rec file missing/small");
+    return false;
+  }
+
+  char hosts[10][32];
+  int n = 0;
+  wifiAddUploadCandidate(hosts, &n, 10, WIFI_UPLOAD_HOST);
+  wifiAddUploadCandidate(hosts, &n, 10, wifiUploadHost);
+
+  IPAddress local = WiFi.localIP();
+  IPAddress gw = WiFi.gatewayIP();
+  const int pref[] = { 2, 3, 4, 5, 6, 1 };
+  char cand[32];
+  for (unsigned i = 0; i < sizeof(pref) / sizeof(pref[0]); i++) {
+    snprintf(cand, sizeof(cand), "%u.%u.%u.%d", local[0], local[1], local[2], pref[i]);
+    wifiAddUploadCandidate(hosts, &n, 10, cand);
+  }
+  snprintf(cand, sizeof(cand), "%u.%u.%u.%u", gw[0], gw[1], gw[2], gw[3]);
+  wifiAddUploadCandidate(hosts, &n, 10, cand);
+
+  for (int i = 0; i < n; i++) {
+    if (wifiUploadToHost(hosts[i])) {
+      strncpy(wifiUploadHost, hosts[i], sizeof(wifiUploadHost) - 1);
+      wifiUploadHost[sizeof(wifiUploadHost) - 1] = '\0';
+      return true;
+    }
+  }
+  return false;
 }
 
 void wifiUploadAbort(bool ok, const char *statusLine) {
@@ -929,10 +970,14 @@ void pollWifiUpload() {
     }
     showTftState(TFT_STATE_UPLOADING);
     wifiUpAttempt = 1;
-    if (wifiUploadHost[0] && wifiProbeHealth(wifiUploadHost)) {
+    if (!wifiUploadHost[0] && WIFI_UPLOAD_HOST[0] != '\0') {
+      strncpy(wifiUploadHost, WIFI_UPLOAD_HOST, sizeof(wifiUploadHost) - 1);
+      wifiUploadHost[sizeof(wifiUploadHost) - 1] = '\0';
+    }
+    // Configured iPad host: POST even if /health was slow (iOS often misses the short probe).
+    if (wifiUploadHost[0]) {
       wifiUpPhase = WIFI_UP_POST;
     } else {
-      wifiUploadHost[0] = '\0';
       wifiDiscoverReset();
       wifiUpPhase = WIFI_UP_DISCOVER;
     }
@@ -951,9 +996,15 @@ void pollWifiUpload() {
 
   if (wifiUpPhase == WIFI_UP_RETRY_WAIT) {
     if (millis() < wifiUpRetryAt) return;
-    wifiUploadHost[0] = '\0';
-    wifiDiscoverReset();
-    wifiUpPhase = WIFI_UP_DISCOVER;
+    if (WIFI_UPLOAD_HOST[0] != '\0') {
+      strncpy(wifiUploadHost, WIFI_UPLOAD_HOST, sizeof(wifiUploadHost) - 1);
+      wifiUploadHost[sizeof(wifiUploadHost) - 1] = '\0';
+      wifiUpPhase = WIFI_UP_POST;
+    } else {
+      wifiUploadHost[0] = '\0';
+      wifiDiscoverReset();
+      wifiUpPhase = WIFI_UP_DISCOVER;
+    }
     return;
   }
 
