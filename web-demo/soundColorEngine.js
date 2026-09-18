@@ -1,15 +1,30 @@
 // Per-recording acoustic signature → vivid, distinct color palettes.
 const SoundColorEngine = {
+  // Source-matched families, spaced so categories do not collide.
+  // birds: amber beak/sun · wind: leaf green · water: water blue
+  // impact: rust/earth · insects: iridescent magenta (buzz, not gold)
   archetypeHue: {
-    birds: 28,
-    wind_leaves: 272,
-    water: 204,
-    material_impact: 16,
-    insects_amphibians: 52
+    birds: 36,
+    wind_leaves: 126,
+    water: 212,
+    material_impact: 14,
+    insects_amphibians: 298
+  },
+
+  archetypeTone: {
+    birds: { sat: 8, light: 6 },
+    wind_leaves: { sat: -10, light: 4 },
+    water: { sat: 6, light: 8 },
+    material_impact: { sat: -6, light: -10 },
+    insects_amphibians: { sat: 12, light: 2 }
   },
 
   clamp01(v) {
     return Math.min(1, Math.max(0, v || 0));
+  },
+
+  clampRange(v, min, max) {
+    return Math.min(max, Math.max(min, v));
   },
 
   clampByte(v) {
@@ -89,11 +104,13 @@ const SoundColorEngine = {
       hueCenter = (bass * 30 + mid * 160 + treble * 280 + (seed % 47)) % 360;
     }
 
-    // Within-class hue drift from acoustics (does not leave the family entirely)
-    const pitchShift = (pitch - 0.5) * 48;
-    const brightShift = (bright - 0.5) * 24;
-    const familySpread = archetypeId ? 52 : 72;
-    const hueSpread = familySpread + rough * 36 + flux * 28 + energy * 18 + (seed % 18);
+    // Acoustics stay inside the family: pitch/bright mainly lighten, not recolor.
+    const tone = this.archetypeTone[archetypeId] || { sat: 0, light: 0 };
+    const familyHalf = archetypeId ? 22 : 40;
+    const pitchShift = this.clampRange((pitch - 0.5) * 28, -familyHalf, familyHalf);
+    const brightShift = this.clampRange((bright - 0.5) * 12, -12, 12);
+    const familySpread = archetypeId ? 28 : 56;
+    const hueSpread = familySpread + rough * 12 + flux * 10 + (seed % 8);
     const count = 8;
     const palette = [];
 
@@ -103,21 +120,16 @@ const SoundColorEngine = {
       const specMid = this.profileBand(profile, 0.33, 0.66);
       const specHigh = this.profileBand(profile, 0.66, 1);
       const bandMix = bass * (1 - t) + mid * 0.45 + treble * t;
-      const specNudge = (specLow * (1 - t) + specMid * 0.5 + specHigh * t) * 64 - 32;
-      const acousticNudge = (bandMix - 0.35) * 40;
+      const specNudge = this.clampRange((specLow * (1 - t) + specMid * 0.5 + specHigh * t) * 24 - 12, -14, 14);
+      const acousticNudge = this.clampRange((bandMix - 0.35) * 16, -12, 12);
 
       let hue = hueCenter + pitchShift + brightShift + specNudge + acousticNudge;
       hue += (t - 0.5) * hueSpread;
-      hue += ((seed % 41) - 20) * t * 0.4;
-      if (archetypeId === "insects_amphibians" && i === count - 1) hue += 200;
-      if (archetypeId === "birds" && i === 0) hue -= 10;
-      if (archetypeId === "water" && i > count / 2) hue += 18;
-      if (archetypeId === "wind_leaves" && i < 2) hue -= 22; // teal lean for leaves
 
-      const sat = 58 + energy * 22 + mid * 18 + treble * 20 + rough * 10 + (seed % 11);
-      const light = 38 + bright * 24 + treble * 20 * t + bass * 18 * (1 - t) + (i % 2) * 5;
+      const sat = 58 + tone.sat + energy * 18 + treble * 12 + rough * 8 + (seed % 7);
+      const light = 36 + tone.light + bright * 22 + pitch * 10 + bass * 10 * (1 - t) + treble * 8 * t;
 
-      palette.push(this.hslToRgb(hue, Math.min(94, sat), Math.min(74, Math.max(28, light))));
+      palette.push(this.hslToRgb(hue, Math.min(92, Math.max(42, sat)), Math.min(72, Math.max(24, light))));
     }
     return palette;
   },

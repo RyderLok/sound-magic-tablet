@@ -115,8 +115,8 @@ class BrushGenerator {
     const angle = Math.atan2(y - previousY, x - previousX);
     const perpX = -Math.sin(angle);
     const perpY = Math.cos(angle);
-    const amp = lerp(8, 22, energy);
-    const steps = Math.max(1, Math.floor(dist / 8));
+    const amp = lerp(18, 42, energy);
+    const steps = Math.max(1, Math.floor(dist / 14));
     this.wavePhase += dist * 0.04;
 
     for (let i = 0; i <= steps; i += 1) {
@@ -158,22 +158,24 @@ class BrushGenerator {
     const angle = Math.atan2(y - previousY, x - previousX);
     const perpX = -Math.sin(angle);
     const perpY = Math.cos(angle);
-    const spacing = lerp(14, 6, tempo);
+    const spacing = lerp(22, 12, tempo);
     const steps = Math.max(1, Math.floor(dist / spacing));
     this.pulsePhase += steps * 0.35;
+    const rowGap = lerp(12, 22, tempo);
 
     for (let i = 0; i <= steps; i += 1) {
       const t = steps > 0 ? i / steps : 0;
       const bx = lerp(previousX, x, t);
       const by = lerp(previousY, y, t);
-      const gridOff = (i % 2 === 0 ? 1 : -1) * lerp(4, 12, tempo);
-      this.spawnCluster(
-        bx + perpX * gridOff,
-        by + perpY * gridOff,
-        vp,
-        "pulse_grid",
-        { pulseIndex: i, pulsePhase: this.pulsePhase }
-      );
+      for (let row = -1; row <= 1; row += 1) {
+        this.spawnCluster(
+          bx + perpX * row * rowGap,
+          by + perpY * row * rowGap,
+          vp,
+          "pulse_grid",
+          { pulseIndex: i, pulsePhase: this.pulsePhase, gridRow: row }
+        );
+      }
     }
   }
 
@@ -236,12 +238,12 @@ class BrushGenerator {
         };
       case "wave_ripple":
         return {
-          count: Math.floor(lerp(160, 300, d)),
-          radius: lerp(18, 44, scale) * lerp(0.9, 1.25, expand),
+          count: Math.floor(lerp(48, 110, d)),
+          radius: lerp(16, 36, scale) * lerp(0.9, 1.25, expand),
           maxAge: lerp(0.85, 1.2, trail),
-          pointAlpha: 16,
+          pointAlpha: 28,
           trailFade: Math.floor(lerp(8, 18, 1 - trail)),
-          waveFreq: lerp(0.04, 0.14, vibFreq) * lerp(0.85, 1.2, motion),
+          waveFreq: lerp(0.08, 0.2, vibFreq) * lerp(0.85, 1.2, motion),
           jitter: turb,
           vibAmp
         };
@@ -259,13 +261,13 @@ class BrushGenerator {
         };
       case "pulse_grid":
         return {
-          count: Math.floor(lerp(90, 220, d)),
-          radius: lerp(12, 32, scale) * lerp(0.8, 1.1, 1 - particleSize),
+          count: Math.floor(lerp(18, 48, d)),
+          radius: lerp(8, 16, scale) * lerp(0.8, 1.1, 1 - particleSize),
           maxAge: 1,
-          pointAlpha: 20,
+          pointAlpha: 42,
           trailFade: Math.floor(lerp(9, 18, 1 - trail)),
           vibrateFreq: lerp(0.05, 0.18, vibFreq) * lerp(0.85, 1.3, vibAmp),
-          spacing: lerp(0.7, 1.35, brush.spacing ?? (1 - d)),
+          spacing: lerp(0.95, 1.55, brush.spacing ?? (1 - d)),
           jitter: turb,
           vibAmp,
           vibFreq
@@ -439,12 +441,23 @@ class BrushGenerator {
         break;
       }
       case "wave_ripple": {
-        graphics.stroke(c.r, c.g, c.b, alpha);
-        graphics.strokeWeight(1.2);
-        graphics.point(p.x, p.y);
-        if (p.prevX != null && p.life > 0.4) {
-          graphics.stroke(c.r, c.g, c.b, alpha * 0.55);
+        graphics.stroke(c.r, c.g, c.b, alpha + 8);
+        graphics.strokeWeight(1.7);
+        if (p.prevX != null) {
           graphics.line(p.prevX, p.prevY, p.x, p.y);
+          const dx = p.x - p.prevX;
+          const dy = p.y - p.prevY;
+          const len = Math.hypot(dx, dy) || 1;
+          graphics.stroke(c.r, c.g, c.b, alpha * 0.55);
+          graphics.strokeWeight(0.9);
+          graphics.line(
+            p.x - (dy / len) * 5,
+            p.y + (dx / len) * 5,
+            p.x + (dy / len) * 5,
+            p.y - (dx / len) * 5
+          );
+        } else {
+          graphics.point(p.x, p.y);
         }
         break;
       }
@@ -461,14 +474,11 @@ class BrushGenerator {
         break;
       }
       case "pulse_grid": {
-        graphics.stroke(c.r, c.g, c.b, alpha);
-        graphics.strokeWeight(1);
-        graphics.point(p.x, p.y);
-        if (Math.floor(p.colorSeed) % 4 === 0) {
-          graphics.stroke(Math.min(255, c.r + 35), Math.min(255, c.g + 20), c.b, alpha * 0.65);
-          graphics.point(p.x + 2, p.y);
-          graphics.point(p.x, p.y + 2);
-        }
+        const arm = 3.6;
+        graphics.stroke(c.r, c.g, c.b, alpha + 18);
+        graphics.strokeWeight(1.5);
+        graphics.line(p.x - arm, p.y, p.x + arm, p.y);
+        graphics.line(p.x, p.y - arm, p.x, p.y + arm);
         break;
       }
       default: {
@@ -708,10 +718,11 @@ class BrushGenerator {
     let angle = Math.random() * TWO_PI;
 
     if (pattern === "pulse_grid") {
-      const row = Math.floor(Math.random() * 4);
-      const col = (Math.random() - 0.5) * 2;
-      r = Math.abs(col) * cluster.baseRadius * 0.45;
-      angle = (row / 4) * TWO_PI;
+      const cell = 8 * (profile.spacing || 1);
+      const gx = Math.round((Math.random() * 5) - 2);
+      const gy = Math.round((Math.random() * 5) - 2);
+      r = Math.hypot(gx, gy) * cell;
+      angle = Math.atan2(gy, gx) || 0;
     } else if (pattern === "scatter_points") {
       r = Math.abs(randomGaussian(0, sigma * 0.6));
     } else if (pattern === "impact_burst" && initial) {
