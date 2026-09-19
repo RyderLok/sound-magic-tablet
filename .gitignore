@@ -1,9 +1,10 @@
 # Dependencies
 node_modules/
 
-# Python virtual environments (Windows .venv + Mac .venv-mac)
+# Python virtual environments (Windows .venv + Mac .venv-mac + Linux/Cloud .venv-linux)
 .venv/
 .venv-mac/
+.venv-linux/
 venv/
 env/
 __pycache__/
